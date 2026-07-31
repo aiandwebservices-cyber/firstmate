@@ -49,8 +49,8 @@ Supported by tests:
 
 - output that reached the runner is stored atomically at mode `0600` **before** any event referencing it is published;
 - a durably stored but unannounced result is re-announced after a restart, without duplicating the handled effect;
-- one owner per canonical source, across homes that share one underlying source store;
-- a stale claim whose runner is gone is reclaimable, while a live owner is never displaced;
+- one identity-matched owner per canonical source, across homes that share one underlying source store;
+- stale-claim replacement is serialized, release is generation-bound, and process-group signals require the recorded process identity;
 - stored argv is executed directly, so an argument containing spaces or shell metacharacters is never re-split or interpreted;
 - oversized output is bounded rather than published whole or silently dropped.
 

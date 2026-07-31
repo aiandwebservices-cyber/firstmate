@@ -138,8 +138,14 @@ cmd_start() {
     2) printf 'already owned: %s\n' "$id"; exit 0 ;;
     *) die "cannot claim source: $id" ;;
   esac
-  # shellcheck disable=SC2064 # expand now: the trap must release this exact claim.
-  trap "fm_procevent_claim_release '$id' '$FM_HOME' 2>/dev/null || true" EXIT
+  CLAIM_ID=$id
+  CLAIM_HOME=$FM_HOME
+  CLAIM_PID=$$
+  CLAIM_TOKEN=$FM_PROCEVENT_CLAIM_TOKEN
+  release_start_claim() {
+    fm_procevent_claim_release "$CLAIM_ID" "$CLAIM_HOME" "$CLAIM_PID" "$CLAIM_TOKEN" 2>/dev/null || true
+  }
+  trap release_start_claim EXIT
   printf '%s\n' "$$" > "$(runner_file "$id")" 2>/dev/null || true
   chmod 0600 "$(runner_file "$id")" 2>/dev/null || true
 
@@ -190,7 +196,7 @@ detach_runner() {  # <source-id>
 }
 
 cmd_reconcile() {
-  local rec id published started=0 stopped=0 claim claim_rec
+  local rec id published started=0 stopped=0 claim owner pid token identity
   published=$(publish_pending)
 
   # Stop a runner this home owns whose source is no longer registered. Without
@@ -201,11 +207,14 @@ cmd_reconcile() {
     id=${claim##*/}; id=${id%.claim}
     fm_procevent_source_id_valid "$id" || continue
     [ -f "$(source_file "$id")" ] && continue
-    claim_rec=$(fm_procevent_claim_read "$id" 2>/dev/null) || continue
-    [ "${claim_rec%%$'\t'*}" = "$FM_HOME" ] || continue
-    fm_procevent_claim_live "$id" || { fm_procevent_claim_release "$id" "$FM_HOME" 2>/dev/null || true; continue; }
-    stop_runner_pid "${claim_rec#*$'\t'}"
-    fm_procevent_claim_release "$id" "$FM_HOME" 2>/dev/null || true
+    fm_procevent_claim_load "$id" 2>/dev/null || continue
+    owner=$FM_PROCEVENT_CLAIM_HOME
+    pid=$FM_PROCEVENT_CLAIM_PID
+    token=$FM_PROCEVENT_CLAIM_TOKEN
+    identity=$FM_PROCEVENT_CLAIM_IDENTITY
+    [ "$owner" = "$FM_HOME" ] || continue
+    stop_runner_pid "$pid" "$identity"
+    fm_procevent_claim_release "$id" "$owner" "$pid" "$token" 2>/dev/null || true
     rm -f -- "$(runner_file "$id")"
     stopped=$((stopped + 1))
   done
@@ -229,45 +238,35 @@ cmd_reconcile() {
 # its own process group leader, so the group signal is what actually reaches the
 # blocking child - signalling only the runner would leave that child alive and
 # reparented, which is exactly how a source that never completes leaks.
-stop_runner_pid() {  # <pid>
-  local pid=${1-}
+stop_runner_pid() {  # <pid> <identity>
+  local pid=${1-} identity=${2-}
   case "$pid" in ''|*[!0-9]*) return 0 ;; esac
-  kill -0 "$pid" 2>/dev/null || return 0
+  [ -n "$identity" ] || return 0
+  fm_procevent_pid_matches "$pid" "$identity" || return 0
   kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
   local i=0
   while [ "$i" -lt 20 ]; do
-    kill -0 "$pid" 2>/dev/null || return 0
+    fm_procevent_pid_matches "$pid" "$identity" || return 0
     sleep 0.1
     i=$((i + 1))
   done
+  fm_procevent_pid_matches "$pid" "$identity" || return 0
   kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
 }
 
-# Resolve this home's runner pid for a source. The in-home record is preferred,
-# but the machine-wide claim also carries it, so retirement still works when the
-# home's state has already been removed.
-runner_pid_for() {  # <source-id>
-  local id=$1 runner pid rec
-  runner=$(runner_file "$id")
-  if [ -f "$runner" ] && [ ! -L "$runner" ]; then
-    IFS= read -r pid < "$runner" 2>/dev/null || pid=
-    case "$pid" in ''|*[!0-9]*) pid= ;; esac
-  fi
-  if [ -z "${pid:-}" ] && rec=$(fm_procevent_claim_read "$id" 2>/dev/null); then
-    [ "${rec%%$'\t'*}" = "$FM_HOME" ] && pid=${rec#*$'\t'}
-    case "${pid:-}" in ''|*[!0-9]*) pid= ;; esac
-  fi
-  printf '%s\n' "${pid:-}"
-}
-
 cmd_retire() {
-  local id=${1-} pid
+  local id=${1-} owner= pid= token= identity=
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
-  pid=$(runner_pid_for "$id")
-  rm -f -- "$(runner_file "$id")"
-  stop_runner_pid "$pid"
+  if fm_procevent_claim_load "$id" 2>/dev/null && [ "$FM_PROCEVENT_CLAIM_HOME" = "$FM_HOME" ]; then
+    owner=$FM_PROCEVENT_CLAIM_HOME
+    pid=$FM_PROCEVENT_CLAIM_PID
+    token=$FM_PROCEVENT_CLAIM_TOKEN
+    identity=$FM_PROCEVENT_CLAIM_IDENTITY
+  fi
   rm -f -- "$(source_file "$id")"
-  fm_procevent_claim_release "$id" "$FM_HOME" 2>/dev/null || true
+  rm -f -- "$(runner_file "$id")"
+  [ -z "$pid" ] || stop_runner_pid "$pid" "$identity"
+  [ -z "$token" ] || fm_procevent_claim_release "$id" "$owner" "$pid" "$token" 2>/dev/null || true
   printf 'retired: %s\n' "$id"
 }
 

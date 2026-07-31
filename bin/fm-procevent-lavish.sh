@@ -47,7 +47,7 @@ usage() { sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd_source_id() {
   local artifact=${1-} real
   [ -n "$artifact" ] || usage
-  real=$(cd "$(dirname "$artifact")" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$(basename "$artifact")") \
+  real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
     || die "cannot resolve the artifact path: $artifact"
   [ -f "$real" ] || die "artifact does not exist: $artifact"
   if command -v shasum >/dev/null 2>&1; then
@@ -62,7 +62,8 @@ cmd_arm() {
   [ -n "$artifact" ] || usage
   command -v lavish-axi >/dev/null 2>&1 || die "lavish-axi is not installed"
   id=$(cmd_source_id "$artifact") || exit 1
-  real=$(cd "$(dirname "$artifact")" && printf '%s/%s\n' "$(pwd -P)" "$(basename "$artifact")")
+  real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
+    || die "cannot resolve the artifact path: $artifact"
   # The plain blocking form: no --timeout-ms, so completion is a server event.
   "$SCRIPT_DIR/fm-procevent.sh" register lavish "$id" -- lavish-axi poll "$real" || exit 1
   printf 'armed: %s\n' "$id"

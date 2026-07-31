@@ -62,68 +62,98 @@ fm_procevent_any_registered() {
 }
 
 # --- ownership --------------------------------------------------------------
-# A claim is a single-link 0600 file created exclusively. It records the owning
-# home and the runner pid, so a stale claim from a dead runner can be reclaimed
-# while a live one is refused rather than duplicated.
+# A claim is a private file recording the home, runner pid, claim generation,
+# and process identity. Claim replacement and exact-generation release are
+# serialized at the claim path.
 
 fm_procevent_claim_path() {
   printf '%s/%s.claim\n' "$(fm_procevent_claim_root)" "$1"
 }
 
-fm_procevent_claim_read() {  # <source-id> -> "home<TAB>pid"
-  local claim home pid
+fm_procevent_claim_load() {  # <source-id>
+  local claim
   claim=$(fm_procevent_claim_path "$1")
   [ -f "$claim" ] && [ ! -L "$claim" ] || return 1
-  IFS= read -r home < "$claim" || return 1
-  pid=$(sed -n '2p' "$claim" 2>/dev/null)
-  printf '%s\t%s\n' "$home" "$pid"
+  FM_PROCEVENT_CLAIM_HOME=$(sed -n '1p' "$claim" 2>/dev/null)
+  FM_PROCEVENT_CLAIM_PID=$(sed -n '2p' "$claim" 2>/dev/null)
+  FM_PROCEVENT_CLAIM_TOKEN=$(sed -n '3p' "$claim" 2>/dev/null)
+  FM_PROCEVENT_CLAIM_IDENTITY=$(sed -n '4p' "$claim" 2>/dev/null)
+  [ -n "$FM_PROCEVENT_CLAIM_HOME" ] || return 1
+  case "$FM_PROCEVENT_CLAIM_PID" in ''|*[!0-9]*) return 1 ;; esac
+  [ -n "$FM_PROCEVENT_CLAIM_TOKEN" ] || return 1
+  [ -n "$FM_PROCEVENT_CLAIM_IDENTITY" ] || return 1
+}
+
+fm_procevent_pid_matches() {  # <pid> <identity>
+  local pid=$1 expected=$2 actual
+  fm_pid_alive "$pid" || return 1
+  actual=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
+  [ "$actual" = "$expected" ]
 }
 
 fm_procevent_claim_live() {  # <source-id>: true when a live process holds it
-  local rec pid
-  rec=$(fm_procevent_claim_read "$1") || return 1
-  pid=${rec#*$'\t'}
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  kill -0 "$pid" 2>/dev/null
+  fm_procevent_claim_load "$1" || return 1
+  fm_procevent_pid_matches "$FM_PROCEVENT_CLAIM_PID" "$FM_PROCEVENT_CLAIM_IDENTITY"
 }
 
 # fm_procevent_claim_acquire <source-id> <home> <pid>
 # 0 acquired, 1 error, 2 held by a live owner (possibly another home).
 fm_procevent_claim_acquire() {
-  local id=$1 home=$2 pid=$3 root claim tmp
+  local id=$1 home=$2 pid=$3 root claim lock tmp identity token status
   fm_procevent_source_id_valid "$id" || return 1
+  identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
   root=$(fm_procevent_claim_root)
   (umask 077; mkdir -p "$root") || return 1
   [ -d "$root" ] && [ ! -L "$root" ] || return 1
   claim=$(fm_procevent_claim_path "$id")
+  lock="$claim.lock"
+  fm_lock_acquire_wait "$lock"
+  status=0
   if [ -e "$claim" ] || [ -L "$claim" ]; then
-    fm_procevent_claim_live "$id" && return 2
-    # Stale claim from a dead runner: remove only a plain private file.
-    [ -f "$claim" ] && [ ! -L "$claim" ] || return 1
-    rm -f -- "$claim" || return 1
+    if fm_procevent_claim_live "$id"; then
+      status=2
+    elif [ -f "$claim" ] && [ ! -L "$claim" ]; then
+      rm -f -- "$claim" || status=1
+    else
+      status=1
+    fi
   fi
-  tmp=$(umask 077; mktemp "$root/.claim.XXXXXX") || return 1
-  printf '%s\n%s\n' "$home" "$pid" > "$tmp" || { rm -f -- "$tmp"; return 1; }
-  chmod 0600 "$tmp" || { rm -f -- "$tmp"; return 1; }
-  # ln is the exclusive-create step: a concurrent winner makes this fail.
-  if ! ln "$tmp" "$claim" 2>/dev/null; then
-    rm -f -- "$tmp"
-    return 2
+  if [ "$status" -eq 0 ]; then
+    tmp=$(umask 077; mktemp "$root/.claim.XXXXXX") || status=1
   fi
-  rm -f -- "$tmp"
+  if [ "$status" -eq 0 ]; then
+    token=${tmp##*/}-$pid
+    printf '%s\n%s\n%s\n%s\n' "$home" "$pid" "$token" "$identity" > "$tmp" || status=1
+    [ "$status" -ne 0 ] || chmod 0600 "$tmp" || status=1
+    [ "$status" -ne 0 ] || mv -f -- "$tmp" "$claim" || status=1
+    if [ "$status" -eq 0 ]; then
+      FM_PROCEVENT_CLAIM_TOKEN=$token
+    else
+      rm -f -- "$tmp"
+    fi
+  fi
+  fm_lock_release "$lock"
+  return "$status"
 }
 
-# fm_procevent_claim_release <source-id> <home>
-# Releases only a claim this home still owns, so a slow loser cannot drop the
-# winner's claim.
+# fm_procevent_claim_release <source-id> <home> <pid> <token>
 fm_procevent_claim_release() {
-  local id=$1 home=$2 claim rec
+  local id=$1 home=$2 pid=$3 token=$4 claim lock status=1
   fm_procevent_source_id_valid "$id" || return 1
   claim=$(fm_procevent_claim_path "$id")
   [ -e "$claim" ] || return 0
-  rec=$(fm_procevent_claim_read "$id") || return 1
-  [ "${rec%%$'\t'*}" = "$home" ] || return 1
-  rm -f -- "$claim"
+  lock="$claim.lock"
+  fm_lock_acquire_wait "$lock"
+  if [ ! -e "$claim" ]; then
+    status=0
+  elif fm_procevent_claim_load "$id" \
+    && [ "$FM_PROCEVENT_CLAIM_HOME" = "$home" ] \
+    && [ "$FM_PROCEVENT_CLAIM_PID" = "$pid" ] \
+    && [ "$FM_PROCEVENT_CLAIM_TOKEN" = "$token" ]; then
+    rm -f -- "$claim" && status=0
+  fi
+  fm_lock_release "$lock"
+  return "$status"
 }
 
 # --- durable capture and publication ----------------------------------------

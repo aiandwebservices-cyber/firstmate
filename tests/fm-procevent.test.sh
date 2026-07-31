@@ -203,6 +203,46 @@ owner=$(head -1 "$CLAIM" 2>/dev/null || true)
 [ "$owner" != "$TMP_ROOT/gone-home" ] || fail "the stale owner was not replaced"
 pass "stale-owner recovery works and cannot displace a live owner"
 
+HR="$TMP_ROOT/hr"; new_home "$HR"
+RACE_TRIGGER="$TMP_ROOT/race-trigger"
+RACE_LOG="$TMP_ROOT/race-executions"
+RACE_BLOCKER="$TMP_ROOT/race-blocker.sh"
+cat > "$RACE_BLOCKER" <<'SH'
+#!/usr/bin/env bash
+printf 'started\n' >> "$1"
+while [ ! -e "$2" ]; do sleep 0.05; done
+printf 'race result\n'
+SH
+chmod +x "$RACE_BLOCKER"
+pe_register "$HR" lavish race-src -- "$RACE_BLOCKER" "$RACE_LOG" "$RACE_TRIGGER" >/dev/null
+printf '%s\n%s\nold-token\nold-identity\n' "$TMP_ROOT/gone-home" 999999 > "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
+chmod 0600 "$FM_PROCEVENT_CLAIM_ROOT/race-src.claim"
+race_pids=()
+for _ in $(seq 1 24); do
+  pe "$HR" start race-src >/dev/null &
+  race_pids+=("$!")
+done
+wait_for "$RACE_LOG" || fail "no contender acquired the stale claim"
+sleep 0.5
+[ "$(wc -l < "$RACE_LOG" | tr -d ' ')" = 1 ] || fail "stale-claim race started more than one runner"
+: > "$RACE_TRIGGER"
+for race_pid in "${race_pids[@]}"; do wait "$race_pid" 2>/dev/null || true; done
+pass "concurrent stale-claim replacement starts exactly one runner"
+
+HI="$TMP_ROOT/hi"; new_home "$HI"
+pe_register "$HI" lavish reused-src -- /bin/true >/dev/null
+sleep 60 &
+innocent_pid=$!
+printf '%s\n%s\nreused-token\nnot-the-live-process-identity\n' \
+  "$HI" "$innocent_pid" > "$FM_PROCEVENT_CLAIM_ROOT/reused-src.claim"
+chmod 0600 "$FM_PROCEVENT_CLAIM_ROOT/reused-src.claim"
+pe "$HI" retire reused-src >/dev/null
+kill -0 "$innocent_pid" 2>/dev/null || fail "retirement signaled a PID whose identity did not match the claim"
+kill "$innocent_pid" 2>/dev/null || true
+wait "$innocent_pid" 2>/dev/null || true
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/reused-src.claim" "retirement releases the exact reused-pid claim"
+pass "PID reuse cannot signal an unrelated process"
+
 # --- argv boundaries, stderr, exit status, bounds, malformed output ---------
 HD="$TMP_ROOT/hd"; new_home "$HD"
 TRIG3="$TMP_ROOT/trigger-three"
@@ -240,7 +280,22 @@ sid=$(FM_HOME="$TMP_ROOT/hg" "$ROOT/bin/fm-procevent-lavish.sh" source-id "$ART"
 case "$sid" in lavish-*) : ;; *) fail "adapter source id has an unexpected shape: $sid" ;; esac
 sid2=$(FM_HOME="$TMP_ROOT/hg" "$ROOT/bin/fm-procevent-lavish.sh" source-id "$ART")
 [ "$sid" = "$sid2" ] || fail "adapter source id is not stable"
+ART_ALIAS="$TMP_ROOT/artifact-alias.html"
+ln -s "$ART" "$ART_ALIAS"
+sid3=$(FM_HOME="$TMP_ROOT/hg" "$ROOT/bin/fm-procevent-lavish.sh" source-id "$ART_ALIAS")
+[ "$sid" = "$sid3" ] || fail "a final-component symlink produced a second source id"
 pass "the adapter derives a stable physical source id"
+
+HS="$TMP_ROOT/hs"; new_home "$HS"
+mkdir -p "$HS/state/procevent"
+: > "$HS/state/procevent/source-only.source"
+guard_out=$(FM_ROOT_OVERRIDE="$TMP_ROOT/guard-root" FM_HOME="$HS" FM_GUARD_GRACE=1 \
+  "$ROOT/bin/fm-guard.sh" 2>&1)
+assert_contains "$guard_out" "WATCHER DOWN - SUPERVISION IS OFF" \
+  "the general guard warns when only a process-event source needs supervision"
+assert_contains "$guard_out" "1 process-event source(s) registered" \
+  "the general guard identifies the source-only supervision need"
+pass "source-only homes trigger the general supervision guard"
 
 CLS="$TMP_ROOT/cls"
 printf 'session:\n  file: /a.html\n  status: feedback\nprompts[1]{uid}:\n  p1\n' > "$CLS"

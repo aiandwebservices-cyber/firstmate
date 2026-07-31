@@ -417,7 +417,9 @@ A home with no registered source runs nothing, generates no state, and keeps its
 
 Ownership is machine-wide per canonical source, because separate homes can share one underlying source store.
 Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `FM_PROCEVENT_CLAIM_ROOT`).
-A live owner is never displaced; only a claim whose runner is gone is reclaimed.
+Each claim binds its home and runner PID to a process identity and unique generation.
+Replacement is serialized, a live identity-matched owner is never displaced, and release removes only the exact generation the caller acquired.
+Retirement and orphan reconciliation signal a runner process group only while its recorded process identity still matches.
 
 `FM_PROCEVENT_MAX_OUTPUT_BYTES` (default 1048576) bounds a single captured result; oversized output is truncated with a stderr notice rather than published whole or dropped.
 

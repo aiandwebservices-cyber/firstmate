@@ -74,17 +74,16 @@ fm_supervision_status() {
 }
 
 # fm_supervision_needed <state-dir> [grace-seconds]
-# Exit 0 (true) exactly when in-flight work or an X-mode relay poll needs a
-# watcher. Exit 1 (false) for an idle home.
+# Exit 0 (true) exactly when the home needs a watcher.
 fm_supervision_needed() {
   fm_supervision_status "$@"
   [ "$FM_SUP_NEEDED" = true ]
 }
 
 # fm_supervision_unhealthy <state-dir> [grace-seconds]
-# Exit 0 (true) exactly in the dangerous state: in-flight work exists and no
-# watcher has a fresh beacon. Exit 1 (false) otherwise, including zero in-flight.
+# Exit 0 (true) exactly when supervision is needed and no watcher has a fresh
+# beacon. Exit 1 (false) otherwise.
 fm_supervision_unhealthy() {
   fm_supervision_status "$@"
-  [ "$FM_SUP_IN_FLIGHT" -gt 0 ] && [ "$FM_SUP_WATCHER_FRESH" = false ]
+  [ "$FM_SUP_NEEDED" = true ] && [ "$FM_SUP_WATCHER_FRESH" = false ]
 }
