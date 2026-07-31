@@ -402,6 +402,31 @@ The session-start digest separately prints an "Public commitments awaiting deliv
 `FM_PF_RETRY_BACKOFF_SECS` (default 900) sets the next-attempt time recorded with a retryable delivery error.
 See [verification/public-followup.md](verification/public-followup.md) for the current maintainer evidence behind the restart end-to-end and the relay-disabled zero-overhead guarantee.
 
+## Process-to-event sources (state/procevent)
+
+A long-polling external process is registered as a *source* through its adapter, whose header and `--help` own the commands and flags.
+`bin/fm-procevent.sh` owns the generic contract; `bin/fm-procevent-lavish.sh` is the first adapter and wraps only the currently published `lavish-axi poll` interface.
+
+This section is the single owner of the runner's operating contract.
+Registration writes one private record under `state/procevent/`, and a completed result is captured under `state/procevent-inbox/` before it is published.
+Results are published as ordinary `check` wakes through the existing durable wake queue, so the runner adds no second notification control plane.
+
+Discovery is never a timer.
+Each registered source has its own child process blocking on that source, and the watcher's per-cycle `reconcile` only republishes results already captured durably and restarts a source whose owner is gone.
+A home with no registered source runs nothing, generates no state, and keeps its ordinary cadence.
+
+Ownership is machine-wide per canonical source, because separate homes can share one underlying source store.
+Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `FM_PROCEVENT_CLAIM_ROOT`).
+A live owner is never displaced; only a claim whose runner is gone is reclaimed.
+
+`FM_PROCEVENT_MAX_OUTPUT_BYTES` (default 1048576) bounds a single captured result; oversized output is truncated with a stderr notice rather than published whole or dropped.
+
+The runner proves exactly one durability boundary: output that reached the runner is stored at mode `0600` before any event referencing it is published, and an unannounced stored result is re-announced after a restart.
+It proves nothing about the source side.
+The published `lavish-axi poll` clears feedback destructively before returning it, so a result lost between that clearing and the runner reading process output is unrecoverable.
+Never describe this path as at-least-once, no-loss, or lossless.
+`docs/verification/process-event-sources.md` holds the measurements and `.agents/skills/process-event-sources/SKILL.md` owns the handling procedure.
+
 ## Environment variables
 
 Runtime tuning via environment variables (defaults shown):
@@ -437,6 +462,8 @@ FM_HEARTBEAT=600        # base seconds between heartbeat scans; no-change heartb
 FM_HEARTBEAT_MAX=7200   # heartbeat backoff cap
 FM_CHECK_INTERVAL=300   # seconds between slow checks (authenticated merge polls, custom checks, or X-mode dispatch)
 FM_CHECK_TIMEOUT=30     # seconds allowed per slow check script
+FM_PROCEVENT_MAX_OUTPUT_BYTES=1048576   # bound on one captured process-to-event result
+FM_PROCEVENT_CLAIM_ROOT=                # machine-wide source claim root; default $XDG_STATE_HOME/firstmate/procevent-claims
 FM_CODEX_WATCH_CHECKPOINT=180   # seconds per foreground watcher checkpoint in Codex primary supervision
 FM_CREW_STATE_NM_TIMEOUT=10   # seconds allowed per no-mistakes query inside fm-crew-state.sh
 FM_CREW_STATE_RUNS_LIMIT=200  # recent no-mistakes run rows scanned when axi status cannot be attributed to the current code
