@@ -356,7 +356,7 @@ stop_runner_pid() {  # <pid> <identity>
 }
 
 cmd_retire() {
-  local id=${1-} owner= pid= token= identity= stop_state
+  local id=${1-} owner='' pid='' token='' identity='' stop_state
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
   fm_procevent_source_lock_acquire "$id" || die "cannot lock source: $id"
   if [ -e "$(fm_procevent_claim_path "$id")" ]; then
