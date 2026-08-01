@@ -412,8 +412,8 @@ Registration writes one private record under `state/procevent/`, and a completed
 Results are published as ordinary `check` wakes carrying the source id and committed result sequence through the existing durable wake queue, so the runner adds no second notification control plane.
 
 Discovery is never a timer.
-Each registered source has its own child process blocking on that source, and the watcher's per-cycle `reconcile` only republishes results already captured durably and restarts a source whose owner is gone.
-A home with no registered source runs nothing, generates no state, and keeps its ordinary cadence.
+Each registered source has its own child process blocking on that source, and the watcher's per-cycle `reconcile` republishes results already captured durably, restarts a source whose owner is gone, and stops this home's runner when reconciliation runs after its registration disappeared unexpectedly.
+In supported steady state, a home with no registered source runs nothing, generates no state, and keeps its ordinary cadence.
 
 Ownership is machine-wide per canonical source, because separate homes can share one underlying source store.
 Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `FM_PROCEVENT_CLAIM_ROOT`).
