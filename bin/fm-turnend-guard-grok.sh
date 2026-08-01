@@ -8,6 +8,16 @@
 # precedence over the legacy snake-case spelling when both are present.
 set -u
 
+# Captain-authorized temporary mute: when state/.mute-turnend-guard exists, never
+# force a nested resume / stop continuation (operator thrash relief). Resolve
+# state with env vars only — no dirname/cd — so fail-open tests with a stripped
+# PATH still exit cleanly (same fail-open posture as missing jq).
+if { [ -n "${FM_STATE_OVERRIDE:-}" ] && [ -e "${FM_STATE_OVERRIDE%/}/.mute-turnend-guard" ]; } \
+  || { [ -n "${FM_HOME:-}" ] && [ -e "${FM_HOME%/}/state/.mute-turnend-guard" ]; } \
+  || { [ -n "${GROK_WORKSPACE_ROOT:-}" ] && [ -e "${GROK_WORKSPACE_ROOT%/}/state/.mute-turnend-guard" ]; }; then
+  exit 0
+fi
+
 PAYLOAD=$(cat 2>/dev/null || true)
 [ -n "$PAYLOAD" ] || exit 0
 

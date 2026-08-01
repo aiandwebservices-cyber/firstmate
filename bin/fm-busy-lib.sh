@@ -251,8 +251,11 @@ fm_busy_record_read() {  # <state-dir> <id>
 # FM_BUSY_REGEX still globally overrides the signature, mirroring the
 # historical operator escape hatch.
 fm_busy_grok_tail_busy() {
+  # Default keeps both mid-turn cancel hints: older grok used Ctrl+c:cancel;
+  # Grok 4.5 (live 2026-07-31) uses Esc:cancel. fm-tmux-lib.sh owns the same
+  # FM_TMUX_GROK_BUSY_REGEX_DEFAULT string when that file is sourced first.
   grep -v '^[[:space:]]*$' | tail -12 \
-    | grep -qiE "${FM_BUSY_REGEX:-${FM_TMUX_GROK_BUSY_REGEX_DEFAULT:-Ctrl\\+c:cancel}}"
+    | grep -qiE "${FM_BUSY_REGEX:-${FM_TMUX_GROK_BUSY_REGEX_DEFAULT:-Ctrl\\+c:cancel|Esc:cancel}}"
 }
 
 # fm_busy_classify: semantic classification for a task whose endpoint the

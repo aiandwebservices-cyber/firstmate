@@ -236,8 +236,13 @@ test_grok_regex_isolated() {
   state=$(new_state_dir grok-arm)
   out=$(fm_busy_classify tmux w1 grok t1 "$state" 'thinking hard
 Ctrl+c:cancel')
-  [ "$out" = "busy grok-regex" ] || fail "grok busy tail must classify 'busy grok-regex', got '$out'"
+  [ "$out" = "busy grok-regex" ] || fail "legacy Ctrl+c:cancel busy tail must classify 'busy grok-regex', got '$out'"
+  # Grok 4.5 mid-turn keybind bar (live 2026-07-31): Esc:cancel while responding.
+  out=$(fm_busy_classify tmux w1 grok t1 "$state" 'Responding… 3m53s
+Shift+Tab:mode  │  Esc:cancel  │  Ctrl+x:')
+  [ "$out" = "busy grok-regex" ] || fail "Grok 4.5 Esc:cancel busy tail must classify 'busy grok-regex', got '$out'"
   out=$(fm_busy_classify tmux w1 grok t1 "$state" 'done.
+Shift+Tab:mode  │  Ctrl+x:shortcuts
 > ')
   [ "$out" = "idle grok-regex" ] || fail "grok idle tail must classify 'idle grok-regex', got '$out'"
   # Another adapter's footer never makes grok busy either.

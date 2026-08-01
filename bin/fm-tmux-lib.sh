@@ -67,11 +67,16 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
 
 # Delivery-only rendered busy footers per harness. claude/codex: "esc to
-# interrupt"; opencode: "esc interrupt"; pi: "Working..."; grok: "Ctrl+c:cancel".
-# Claude's current spinner has a rotating glyph and word, but every active-turn
-# line has an ellipsis followed by a parenthesized elapsed duration. Keep this
-# signature separate from the shared default because that shape is not generic
-# enough to classify arbitrary harness output safely.
+# interrupt"; opencode: "esc interrupt"; pi: "Working..."; grok: mid-turn
+# cancel hint in the keybind bar. Older grok rendered `Ctrl+c:cancel`; current
+# Grok Build (live 2026-07-31, Grok 4.5) renders `Esc:cancel` while a turn is
+# running and drops that token when idle (`Shift+Tab:mode │ Ctrl+x:shortcuts`).
+# Match both so a long tool-call turn is not misread as idle and stale-surfaced.
+# Do NOT use bare `esc` alone: Claude's `esc to interrupt` must not classify a
+# Grok task busy. Claude's current spinner has a rotating glyph and word, but
+# every active-turn line has an ellipsis followed by a parenthesized elapsed
+# duration. Keep this signature separate from the shared default because that
+# shape is not generic enough to classify arbitrary harness output safely.
 # Kimi's anchored moon-phase spinner is separate because bare moon glyphs in
 # ordinary output must not classify another harness as busy. Leading whitespace is
 # OPTIONAL; whitespace on both sides of the separator is REQUIRED because every
@@ -82,12 +87,12 @@
 # busy signals on their own.
 # The full moon-phase set remains locale- and emoji-font-sensitive because Kimi
 # exposes no stable ASCII busy token.
-FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel'
+FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working\.\.\.|Ctrl\+c:cancel|Esc:cancel'
 FM_TMUX_CLAUDE_BUSY_REGEX_DEFAULT='esc to interrupt|…[[:space:]]+\([0-9]+[smh]'
 FM_TMUX_CODEX_BUSY_REGEX_DEFAULT='esc to interrupt'
 FM_TMUX_OPENCODE_BUSY_REGEX_DEFAULT='esc interrupt'
 FM_TMUX_PI_BUSY_REGEX_DEFAULT='Working\.\.\.'
-FM_TMUX_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel'
+FM_TMUX_GROK_BUSY_REGEX_DEFAULT='Ctrl\+c:cancel|Esc:cancel'
 FM_TMUX_KIMI_BUSY_REGEX_DEFAULT='^[[:space:]]*(🌑|🌒|🌓|🌔|🌕|🌖|🌗|🌘)[[:space:]]+·[[:space:]]+'
 
 fm_busy_lines_match() {  # [harness]
