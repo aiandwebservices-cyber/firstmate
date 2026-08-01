@@ -1473,6 +1473,54 @@ test_secondmate_force_teardown_sweeps_nested_homes() {
   pass "force teardown sweeps nested secondmate homes before deletion"
 }
 
+test_secondmate_force_teardown_preserves_nested_restore_status() {
+  local home subhome childhome grandchildhome fmroot fakebin log sweep_log rearm_log err rc backup
+  home="$TMP_ROOT/procevent-nested-fail-home"
+  subhome="$TMP_ROOT/procevent-nested-fail-subhome"
+  childhome="$TMP_ROOT/procevent-nested-fail-childhome"
+  grandchildhome="$TMP_ROOT/procevent-nested-fail-grandchildhome"
+  fmroot="$TMP_ROOT/procevent-nested-fail-fmroot"
+  sweep_log="$TMP_ROOT/procevent-nested-fail-sweep.log"
+  rearm_log="$TMP_ROOT/procevent-nested-fail-rearm.log"
+  err="$TMP_ROOT/procevent-nested-fail.err"
+  make_firstmate_git_root "$fmroot"
+  git -C "$fmroot" worktree add --quiet --detach "$grandchildhome" HEAD
+  mkdir -p "$home/state" "$home/data" "$subhome/state" "$childhome/state" "$grandchildhome/state/procevent"
+  mark_firstmate_home "$subhome"
+  mark_firstmate_home "$childhome"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'nested\n' > "$childhome/.fm-secondmate-home"
+  printf 'leaf\n' > "$grandchildhome/.fm-secondmate-home"
+  printf 'adapter=lavish\n' > "$grandchildhome/state/procevent/leaf-source.source"
+  install_fake_process_event_sweep "$grandchildhome" "$sweep_log"
+  : > "$rearm_log"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  fm_write_secondmate_meta "$subhome/state/nested.meta" "$childhome"
+  fm_write_secondmate_meta "$childhome/state/leaf.meta" "$grandchildhome"
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/procevent-nested-fail-fake")
+  log="$TMP_ROOT/procevent-nested-fail-fake/tmux.log"
+
+  set +e
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/procevent-nested-fail-fake/pane.txt" \
+    FM_FAKE_PROCEVENT_SWEEP_LOG="$sweep_log" FM_FAKE_PROCEVENT_REARM_LOG="$rearm_log" \
+    FM_FAKE_TREEHOUSE_RETURN_FAIL=1 FM_FAKE_PROCEVENT_REARM_FAIL=1 \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>"$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 4 ] || fail "nested process-event restoration failure was collapsed at a recursive teardown boundary"
+  grep -F 'active waits may remain retired; recover registrations from ' "$err" >/dev/null || fail "nested restoration failure did not report its recovery backup"
+  backup=$(find "$TMP_ROOT" -maxdepth 1 -type d -name '.fm-procevent-restore.*' \
+    -exec test -e '{}/leaf-source.source' \; -print -quit)
+  [ -n "$backup" ] && [ -e "$backup/leaf-source.source" ] || fail "nested restoration failure did not retain its registration backup"
+  [ -e "$childhome/state/leaf.meta" ] || fail "nested restoration failure removed its parent identity record"
+  [ -e "$subhome/state/nested.meta" ] || fail "nested restoration failure removed its ancestor identity record"
+  [ -e "$home/state/domain.meta" ] || fail "nested restoration failure removed its top-level identity record"
+  pass "force teardown preserves nested process-event restoration status and recovery state"
+}
+
 test_secondmate_teardown_refuses_failed_leased_home_return() {
   local home subhome subhome_abs fakebin log fmroot err rc sweep_log rearm_log backup
   home="$TMP_ROOT/teardown-return-fail-home"
@@ -1531,7 +1579,8 @@ EOF
 
   [ "$rc" -eq 4 ] || fail "failed process-event restoration did not return its distinct recoverable status"
   grep -F 'active waits may remain retired; recover registrations from ' "$err" >/dev/null || fail "failed process-event restoration did not report its recovery backup"
-  backup=$(find "$TMP_ROOT" -maxdepth 1 -type d -name '.fm-procevent-restore.*' -print -quit)
+  backup=$(find "$TMP_ROOT" -maxdepth 1 -type d -name '.fm-procevent-restore.*' \
+    -exec test -e '{}/source.source' \; -print -quit)
   [ -n "$backup" ] && [ -e "$backup/source.source" ] || fail "failed process-event restoration did not retain its registration backup"
   pass "secondmate teardown refuses to hide failed leased-home return"
 }
@@ -2387,6 +2436,7 @@ test_secondmate_teardown_sweeps_process_events_before_removal
 test_secondmate_teardown_refuses_process_events_without_sweep_script
 test_secondmate_teardown_preserves_process_events_on_later_refusal
 test_secondmate_force_teardown_sweeps_nested_homes
+test_secondmate_force_teardown_preserves_nested_restore_status
 test_secondmate_teardown_refuses_failed_leased_home_return
 test_secondmate_teardown_removes_plain_clone_home_without_treehouse_return
 test_secondmate_force_teardown_discards_child_work
