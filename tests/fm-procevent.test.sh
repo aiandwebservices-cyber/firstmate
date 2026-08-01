@@ -207,6 +207,57 @@ for _ in $(seq 1 40); do kill -0 "$orphan_pid" 2>/dev/null || break; sleep 0.1; 
 kill -0 "$orphan_pid" 2>/dev/null && fail "reconcile left an orphaned runner alive"
 pass "reconcile reaps a runner whose source registration is gone"
 
+HO="$TMP_ROOT/ho"; new_home "$HO"
+ORPHAN_UNCERTAIN_TRIGGER="$TMP_ROOT/orphan-uncertain-trigger"
+pe_register "$HO" lavish orphan-uncertain-src -- "$BLOCKER" "$ORPHAN_UNCERTAIN_TRIGGER" "uncertain orphan" >/dev/null
+pe "$HO" reconcile >/dev/null
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/orphan-uncertain-src.claim" || fail "uncertain orphan runner did not claim its source"
+orphan_uncertain_pid=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/orphan-uncertain-src.claim")
+ORPHAN_FAKEBIN=$(fm_fakebin "$TMP_ROOT/orphan-identity-tools")
+cat > "$ORPHAN_FAKEBIN/ps" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+chmod +x "$ORPHAN_FAKEBIN/ps"
+rm -f "$HO/state/procevent/orphan-uncertain-src.source"
+out=$(PATH="$ORPHAN_FAKEBIN:$PATH" FM_PROC_ROOT_OVERRIDE="$TMP_ROOT/no-orphan-proc" pe "$HO" reconcile)
+assert_contains "$out" "uncertain=1" "uncertain orphan cleanup remains pending"
+kill -0 "$orphan_uncertain_pid" 2>/dev/null || fail "uncertain orphan cleanup signaled an unverified runner"
+sup=$(FM_HOME="$HO" bash -c \
+  '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_status "$2/state" 300 "$2"; printf "%s:%s:%s:%s\n" "$FM_SUP_NEEDED" "$FM_SUP_REGISTRATIONS" "$FM_SUP_OWNED_CLAIMS" "$FM_SUP_PENDING_RESULTS"' \
+  _ "$ROOT" "$HO")
+assert_contains "$sup" "true:0:1:0" "owned claim keeps source-only supervision active after registration removal"
+guard_out=$(FM_ROOT_OVERRIDE="$TMP_ROOT/guard-root" FM_HOME="$HO" FM_GUARD_GRACE=1 \
+  "$ROOT/bin/fm-guard.sh" 2>&1)
+assert_contains "$guard_out" "registrations=0, owned claims=1, unannounced results=0" \
+  "general guard reports the continuing owned-claim obligation"
+out=$(pe "$HO" reconcile)
+assert_contains "$out" "stopped=1" "identity recovery completes deferred orphan cleanup"
+for _ in $(seq 1 40); do kill -0 "$orphan_uncertain_pid" 2>/dev/null || break; sleep 0.1; done
+kill -0 "$orphan_uncertain_pid" 2>/dev/null && fail "eventual orphan cleanup left the runner alive"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/orphan-uncertain-src.claim" "eventual orphan cleanup releases the claim"
+sup=$(FM_HOME="$HO" bash -c \
+  '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_needed "$2/state" 300 "$2" && echo yes || echo no' \
+  _ "$ROOT" "$HO")
+assert_contains "$sup" "no" "supervision ends after the final cleanup obligation clears"
+pass "owned orphan claims preserve supervision until cleanup succeeds"
+
+HP="$TMP_ROOT/hp"; new_home "$HP"
+mkdir -p "$HP/state/procevent-inbox"
+printf 'pending without registration\n' > "$HP/state/procevent-inbox/pending-src.1.result"
+chmod 0600 "$HP/state/procevent-inbox/pending-src.1.result"
+sup=$(FM_HOME="$HP" bash -c \
+  '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_status "$2/state" 300 "$2"; printf "%s:%s:%s:%s\n" "$FM_SUP_NEEDED" "$FM_SUP_REGISTRATIONS" "$FM_SUP_OWNED_CLAIMS" "$FM_SUP_PENDING_RESULTS"' \
+  _ "$ROOT" "$HP")
+assert_contains "$sup" "true:0:0:1" "unannounced result keeps supervision active without registration or claim"
+out=$(pe "$HP" reconcile)
+assert_contains "$out" "published=1" "reconcile publishes the unannounced result obligation"
+sup=$(FM_HOME="$HP" bash -c \
+  '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_needed "$2/state" 300 "$2" && echo yes || echo no' \
+  _ "$ROOT" "$HP")
+assert_contains "$sup" "no" "announcing the final durable result clears its supervision obligation"
+pass "unannounced results preserve supervision until publication"
+
 # --- a stale claim is reclaimable, a live one is not ------------------------
 CLAIM="$FM_PROCEVENT_CLAIM_ROOT/stale-src.claim"
 mkdir -p "$FM_PROCEVENT_CLAIM_ROOT"
@@ -385,7 +436,7 @@ guard_out=$(FM_ROOT_OVERRIDE="$TMP_ROOT/guard-root" FM_HOME="$HS" FM_GUARD_GRACE
   "$ROOT/bin/fm-guard.sh" 2>&1)
 assert_contains "$guard_out" "WATCHER DOWN - SUPERVISION IS OFF" \
   "the general guard warns when only a process-event source needs supervision"
-assert_contains "$guard_out" "1 process-event source(s) registered" \
+assert_contains "$guard_out" "1 process-event obligation(s) remain" \
   "the general guard identifies the source-only supervision need"
 pass "source-only homes trigger the general supervision guard"
 

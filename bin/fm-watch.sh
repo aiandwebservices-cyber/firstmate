@@ -77,6 +77,8 @@ mkdir -p "$STATE"
 . "$SCRIPT_DIR/fm-pending-reply-lib.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-supervision-lib.sh
+. "$SCRIPT_DIR/fm-supervision-lib.sh"
 
 WATCH_LOCK="$STATE/.watch.lock"
 WATCH_PATH="$SCRIPT_DIR/fm-watch.sh"
@@ -729,9 +731,10 @@ while :; do
 
   # Process-to-event liveness repair. This never discovers a result by polling:
   # each registered source has its own child blocking on that source, and this
-  # only republishes results already captured durably and restarts a source
-  # whose owner is gone. It is a no-op with nothing registered.
-  if [ -d "$STATE/procevent" ]; then
+  # only republishes results already captured durably, restarts a source whose
+  # owner is gone, and completes an owned cleanup obligation.
+  fm_supervision_status "$STATE" "$WATCHER_STALE_GRACE" "$FM_HOME"
+  if [ "$FM_SUP_SOURCES" -gt 0 ]; then
     FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-procevent.sh" reconcile >/dev/null 2>&1 || true
   fi
 

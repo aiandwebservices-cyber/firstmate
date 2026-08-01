@@ -133,7 +133,7 @@ budget_reset() {
   rm -f "$BUDGET_FILE" 2>/dev/null || true
 }
 
-fm_supervision_status "$STATE" "$GRACE"
+fm_supervision_status "$STATE" "$GRACE" "$FM_HOME"
 if [ "$FM_SUP_NEEDED" = false ]; then
   budget_reset
   exit 0
@@ -158,7 +158,8 @@ block_stop() {
     if [ "$FM_SUP_IN_FLIGHT" -gt 0 ]; then
       printf '●  %s task(s) in flight, but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_IN_FLIGHT" "$FM_SUP_BEACON_DESC"
     elif [ "$FM_SUP_SOURCES" -gt 0 ]; then
-      printf '●  %s process-event source(s) registered, but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_SOURCES" "$FM_SUP_BEACON_DESC"
+      printf '●  %s process-event obligation(s) remain (registrations=%s, owned claims=%s, unannounced results=%s), but no live watcher holds this home lock (last beat: %s).\n' \
+        "$FM_SUP_SOURCES" "$FM_SUP_REGISTRATIONS" "$FM_SUP_OWNED_CLAIMS" "$FM_SUP_PENDING_RESULTS" "$FM_SUP_BEACON_DESC"
     else
       printf '●  X-mode relay polling needs supervision, but no live watcher holds this home lock (last beat: %s).\n' "$FM_SUP_BEACON_DESC"
     fi
@@ -225,7 +226,7 @@ if [ "$COUNT" -gt "$BLOCK_BUDGET" ]; then
   if [ "$FM_SUP_IN_FLIGHT" -gt 0 ]; then
     NEED_DESC="$FM_SUP_IN_FLIGHT task(s) in flight"
   elif [ "$FM_SUP_SOURCES" -gt 0 ]; then
-    NEED_DESC="$FM_SUP_SOURCES process-event source(s) registered"
+    NEED_DESC="$FM_SUP_SOURCES process-event obligation(s) remaining"
   else
     NEED_DESC="X-mode relay polling active"
   fi

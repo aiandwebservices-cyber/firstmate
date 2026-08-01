@@ -410,10 +410,12 @@ A long-polling external process is registered as a *source* through its adapter,
 This section is the single owner of the runner's operating contract.
 Registration writes one private record under `state/procevent/`, and a completed result is captured under `state/procevent-inbox/` before it is published.
 Results are published as ordinary `check` wakes through the existing durable wake queue, so the runner adds no second notification control plane.
+This home's continuing cleanup and supervision obligation is the union of its local registrations, machine-wide claims owned by this home, and unannounced durable results.
+Removing a registration does not end responsibility while an owned claim, live child, or undelivered result remains.
 
 Discovery is never a timer.
 Each registered source has its own child process blocking on that source, and the watcher's per-cycle `reconcile` only republishes results already captured durably and restarts a source whose owner is gone.
-A home with no registered source runs nothing, generates no state, and keeps its ordinary cadence.
+A home with no registration, owned claim, or unannounced result runs nothing, generates no state, and keeps its ordinary cadence.
 
 Ownership is machine-wide per canonical source, because separate homes can share one underlying source store.
 Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `FM_PROCEVENT_CLAIM_ROOT`).

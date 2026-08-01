@@ -67,10 +67,12 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 | retire-start exclusion | a queued start revalidates registration after the serialized retirement boundary and executes no child |
 | uncertain identity | a live owner whose identity probe transiently fails is not signaled or released, and its registration remains for retry |
 | source-only supervision | a registered source with no task metadata trips the shared predicate and general guard |
+| continuing cleanup obligation | after registration removal, an identity-unreadable owned claim keeps supervision active without signaling; a later readable reconcile stops the runner, releases the claim, and clears supervision |
+| continuing delivery obligation | an unannounced result with no registration or claim keeps supervision active until reconcile publishes and marks it announced |
 | argv integrity | an argument containing spaces survives as one argument, and a shell-looking argument is passed literally with no interpretation |
 | bounded output | output beyond `FM_PROCEVENT_MAX_OUTPUT_BYTES` is truncated and still captured, never published whole or dropped |
 | silent failure handling | a nonzero exit with no output publishes nothing and leaves the source registered for retry |
-| inertness | a home with no registered source generates no state, starts no process, and does not need supervision |
+| inertness | a home with no registration, owned claim, or unannounced result generates no state, starts no process, and does not need supervision |
 
 ## Runner lifetime and cleanup
 
