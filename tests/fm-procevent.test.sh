@@ -98,7 +98,7 @@ hold_source_lock() {  # <source-id> <ready-file> <release-file>
     . "$1/bin/fm-procevent-lib.sh"
     fm_procevent_source_lock_acquire "$2" || exit 1
     trap "fm_procevent_source_lock_release \"$2\"" EXIT
-    printf 'ready\n' > "$3"
+    printf "ready\n" > "$3"
     while [ ! -e "$4" ]; do
       kill -0 "$5" 2>/dev/null || exit 0
       sleep 0.02
