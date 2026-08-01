@@ -58,7 +58,8 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 | Guarantee | How it is proven |
 | --- | --- |
 | capture before publication | the captured result exists at `0600` and its event names its committed sequence only afterward |
-| restart recovery | a durable result with no announcement marker is re-announced by `reconcile`, once, with no second durable copy and no duplicated wake |
+| restart recovery | a durable result with no announcement marker is re-announced by `reconcile` with the same source and sequence, allowing repeat wakes to be deduplicated |
+| immutable classification | a captured result retains its adapter after its mutable registration is removed |
 | result identity and ordering | each wake names the committed sequence to read, and pending sequences 1, 2, and 10 publish in numeric order |
 | one owner per canonical source | a second home's `start` for the same source id reports `already owned` and publishes nothing |
 | canonical physical identity | a final-component symlink and its target produce the same Lavish source id |
@@ -70,7 +71,7 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 | bounded home sweep | a non-mutating full-tree preflight precedes teardown, then registrations and claim-only owned sources retire through the ordinary safe path at each home-removal boundary |
 | sweep refusal | uncertain identity preserves the runner, claim, registration, home, lease, and parent retirement evidence for retry |
 | foreign ownership | sweeping one home removes its registration without signaling or releasing another home's live claim |
-| nested and force cleanup | normal, force, and nested secondmate removal invoke each target home's sweep at its final removal boundary |
+| nested and force cleanup | normal, force, and nested secondmate removal invoke each target home's sweep at its final removal boundary, and a failed removal restores and rearms registrations |
 | teardown refusal ordering | a later public-followup refusal retains the home and its active process-event registration without invoking its sweep |
 | healthy-home invariance | homes with no registration or owned runner claim retain ordinary registration-only supervision and teardown behavior |
 | source-only supervision | a registered source with no task metadata trips the shared predicate and general guard |

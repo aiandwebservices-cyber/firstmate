@@ -100,7 +100,7 @@ fm_procevent_claim_load_locked() {  # <source-id>
   } < "$claim" || return 1
   [ -n "$home" ] || return 1
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  [ -n "$token" ] || return 1
+  case "$token" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   [ -n "$identity" ] || return 1
   FM_PROCEVENT_CLAIM_HOME=$home
   FM_PROCEVENT_CLAIM_PID=$pid
@@ -130,7 +130,7 @@ fm_procevent_claim_state_locked() {  # <source-id>: 0 live, 1 stale/absent, 2 un
 # fm_procevent_claim_acquire_locked <source-id> <home> <pid> <registration>
 # 0 acquired, 1 error, 2 held by a live owner (possibly another home).
 fm_procevent_claim_acquire_locked() {
-  local id=$1 home=$2 pid=$3 registration=$4 root claim tmp identity token status claim_state
+  local id=$1 home=$2 pid=$3 registration=$4 root claim tmp identity token status claim_state old_home old_token stage
   fm_procevent_source_id_valid "$id" || return 1
   [ -f "$registration" ] && [ ! -L "$registration" ] || return 1
   identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
@@ -144,7 +144,15 @@ fm_procevent_claim_acquire_locked() {
       0|2) status=2 ;;
       1)
         if [ -f "$claim" ] && [ ! -L "$claim" ]; then
-          rm -f -- "$claim" || status=1
+          old_home=$FM_PROCEVENT_CLAIM_HOME
+          old_token=$FM_PROCEVENT_CLAIM_TOKEN
+          if [ "$old_home" = "$home" ]; then
+            stage="${registration%/*}/.$id.$old_token.output"
+            if { [ -e "$stage" ] || [ -L "$stage" ]; } && ! rm -f -- "$stage"; then
+              status=1
+            fi
+          fi
+          [ "$status" -ne 0 ] || rm -f -- "$claim" || status=1
         else
           status=1
         fi
@@ -190,22 +198,27 @@ fm_procevent_claim_release_locked() {
 
 # --- durable capture and publication ----------------------------------------
 
-# fm_procevent_capture <state> <source-id> <output-file>
+# fm_procevent_capture <state> <source-id> <adapter> <output-file>
 # Atomically store the completed output at 0600 and print its durable path. The
 # rename is the commit point; nothing referencing this result may be published
 # before it returns successfully.
 fm_procevent_capture() {
-  local state=$1 id=$2 src=$3 inbox seq dest tmp
+  local state=$1 id=$2 adapter=$3 src=$4 inbox seq dest tmp adapter_dest adapter_tmp
   fm_procevent_source_id_valid "$id" || return 1
+  fm_procevent_adapter_valid "$adapter" || return 1
   inbox=$(fm_procevent_inbox_dir "$state")
   (umask 077; mkdir -p "$inbox") || return 1
   seq=1
   while [ -e "$inbox/$id.$seq.result" ]; do seq=$((seq + 1)); done
   dest="$inbox/$id.$seq.result"
+  adapter_dest="$inbox/$id.$seq.adapter"
   tmp=$(umask 077; mktemp "$inbox/.capture.XXXXXX") || return 1
-  if ! cat "$src" > "$tmp"; then rm -f -- "$tmp"; return 1; fi
-  if ! chmod 0600 "$tmp"; then rm -f -- "$tmp"; return 1; fi
-  if ! mv -f -- "$tmp" "$dest"; then rm -f -- "$tmp"; return 1; fi
+  adapter_tmp=$(umask 077; mktemp "$inbox/.adapter.XXXXXX") || { rm -f -- "$tmp"; return 1; }
+  if ! cat "$src" > "$tmp"; then rm -f -- "$tmp" "$adapter_tmp"; return 1; fi
+  if ! printf '%s\n' "$adapter" > "$adapter_tmp"; then rm -f -- "$tmp" "$adapter_tmp"; return 1; fi
+  if ! chmod 0600 "$tmp" "$adapter_tmp"; then rm -f -- "$tmp" "$adapter_tmp"; return 1; fi
+  if ! mv -f -- "$adapter_tmp" "$adapter_dest"; then rm -f -- "$tmp" "$adapter_tmp"; return 1; fi
+  if ! mv -f -- "$tmp" "$dest"; then rm -f -- "$tmp" "$adapter_dest"; return 1; fi
   printf '%s\n' "$dest"
 }
 
@@ -260,4 +273,17 @@ fm_procevent_result_sequence() {
   local base=${1##*/}
   base=${base%.result}
   printf '%s\n' "${base##*.}"
+}
+
+fm_procevent_result_adapter() {
+  local result=$1 adapter_file="${1%.result}.adapter" adapter extra
+  [ -f "$result" ] && [ ! -L "$result" ] || return 1
+  [ -f "$adapter_file" ] && [ ! -L "$adapter_file" ] || return 1
+  {
+    IFS= read -r adapter \
+      && ! IFS= read -r extra
+  } < "$adapter_file" || return 1
+  [ -z "$extra" ] || return 1
+  fm_procevent_adapter_valid "$adapter" || return 1
+  printf '%s\n' "$adapter"
 }

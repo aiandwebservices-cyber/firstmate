@@ -47,6 +47,7 @@ usage() { sed -n '2,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 cmd_source_id() {
   local artifact=${1-} real
   [ -n "$artifact" ] || usage
+  case "$artifact" in *$'\n'*) die "artifact paths cannot contain newlines" ;; esac
   real=$(perl -MCwd=realpath -e '$p = realpath($ARGV[0]); defined($p) or exit 1; print "$p\n"' "$artifact" 2>/dev/null) \
     || die "cannot resolve the artifact path: $artifact"
   [ -f "$real" ] || die "artifact does not exist: $artifact"

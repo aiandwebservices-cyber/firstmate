@@ -27,13 +27,20 @@ install_fake_process_event_sweep() {
   cat > "$home/bin/fm-procevent.sh" <<'SH'
 #!/usr/bin/env bash
 set -eu
-[ "${1:-}" = sweep-home ] || exit 2
-if [ "${2:-}" = --preflight ]; then
-  exit 0
-fi
-[ "$#" -eq 1 ] || exit 2
-printf '%s\n' "$FM_HOME" >> "$FM_FAKE_PROCEVENT_SWEEP_LOG"
-rm -f -- "$FM_HOME"/state/procevent/*.source "$FM_HOME"/state/procevent/*.runner
+case "${1:-}" in
+  sweep-home)
+    if [ "${2:-}" = --preflight ]; then
+      exit 0
+    fi
+    [ "$#" -eq 1 ] || exit 2
+    printf '%s\n' "$FM_HOME" >> "$FM_FAKE_PROCEVENT_SWEEP_LOG"
+    rm -f -- "$FM_HOME"/state/procevent/*.source "$FM_HOME"/state/procevent/*.runner
+    ;;
+  reconcile)
+    printf '%s\n' "$FM_HOME" >> "$FM_FAKE_PROCEVENT_REARM_LOG"
+    ;;
+  *) exit 2 ;;
+esac
 SH
   chmod +x "$home/bin/fm-procevent.sh"
   : > "$log"
@@ -1466,15 +1473,20 @@ test_secondmate_force_teardown_sweeps_nested_homes() {
 }
 
 test_secondmate_teardown_refuses_failed_leased_home_return() {
-  local home subhome subhome_abs fakebin log fmroot err rc
+  local home subhome subhome_abs fakebin log fmroot err rc sweep_log rearm_log
   home="$TMP_ROOT/teardown-return-fail-home"
   subhome="$TMP_ROOT/teardown-return-fail-subhome"
   fmroot="$TMP_ROOT/teardown-return-fail-fmroot"
   err="$TMP_ROOT/teardown-return-fail.err"
+  sweep_log="$TMP_ROOT/teardown-return-fail-sweep.log"
+  rearm_log="$TMP_ROOT/teardown-return-fail-rearm.log"
   make_firstmate_git_root "$fmroot"
   git -C "$fmroot" worktree add --quiet --detach "$subhome" HEAD
-  mkdir -p "$home/state" "$home/data" "$subhome/state"
+  mkdir -p "$home/state" "$home/data" "$subhome/state/procevent"
   printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'adapter=lavish\nargc=1\nargv:\n/bin/true\n' > "$subhome/state/procevent/source.source"
+  install_fake_process_event_sweep "$subhome" "$sweep_log"
+  : > "$rearm_log"
   subhome_abs=$(cd "$subhome" && pwd -P)
   cat > "$home/state/domain.meta" <<EOF
 window=firstmate:fm-domain
@@ -1493,6 +1505,7 @@ EOF
 
   set +e
   PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-return-fail-fake/pane.txt" \
+    FM_FAKE_PROCEVENT_SWEEP_LOG="$sweep_log" FM_FAKE_PROCEVENT_REARM_LOG="$rearm_log" \
     FM_FAKE_TREEHOUSE_RETURN_FAIL=1 \
     "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err"
   rc=$?
@@ -1502,6 +1515,8 @@ EOF
   grep -F "treehouse return --force $subhome_abs" "$log" >/dev/null || fail "teardown did not try to return the leased home"
   grep -F 'treehouse return failed for secondmate home' "$err" >/dev/null || fail "teardown did not report failed leased home return"
   [ -d "$subhome" ] || fail "teardown removed a leased home after return failed"
+  [ -e "$subhome/state/procevent/source.source" ] || fail "failed leased-home return did not restore the source registration"
+  grep -Fx "$subhome_abs" "$rearm_log" >/dev/null || fail "failed leased-home return did not rearm restored process-event sources"
   [ -e "$home/state/domain.meta" ] || fail "teardown cleared meta after leased home return failed"
   grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null || fail "teardown removed registry route after leased home return failed"
   pass "secondmate teardown refuses to hide failed leased-home return"

@@ -127,9 +127,8 @@ publish_pending() {
     id=$(fm_procevent_result_source_id "$result")
     seq=$(fm_procevent_result_sequence "$result")
     fm_procevent_source_id_valid "$id" || continue
-    adapter=$(read_adapter "$id" 2>/dev/null || true)
-    [ -n "$adapter" ] || adapter=unknown
-    fm_procevent_adapter_valid "$adapter" || adapter=unknown
+    adapter=$(fm_procevent_result_adapter "$result" 2>/dev/null || true)
+    [ -n "$adapter" ] || continue
     line=$(fm_procevent_event_line "$adapter" "$id" "$seq") || continue
     fm_wake_append check "procevent:$id:$seq" "check: $line" || continue
     fm_procevent_mark_announced "$result" || continue
@@ -228,7 +227,7 @@ cmd_start() {
   fi
 
   local durable
-  durable=$(fm_procevent_capture "$STATE" "$id" "$out") || { rm -f -- "$out"; die "cannot durably capture the result"; }
+  durable=$(fm_procevent_capture "$STATE" "$id" "$adapter" "$out") || { rm -f -- "$out"; die "cannot durably capture the result"; }
   rm -f -- "$out"
   STAGED_OUTPUT=
   [ "$truncated" -eq 1 ] && printf 'truncated: %s at %s bytes\n' "$id" "$MAX_OUTPUT_BYTES" >&2

@@ -408,7 +408,7 @@ A long-polling external process is registered as a *source* through its adapter,
 `bin/fm-procevent.sh` owns the generic contract; `bin/fm-procevent-lavish.sh` is the first adapter and wraps only the currently published `lavish-axi poll` interface.
 
 This section is the single owner of the runner's operating contract.
-Registration writes one private record under `state/procevent/`, and a completed result is captured under `state/procevent-inbox/` before it is published.
+Registration writes one private record under `state/procevent/`, and a completed result plus its immutable adapter identity are captured under `state/procevent-inbox/` before it is published.
 Results are published as ordinary `check` wakes carrying the source id and committed result sequence through the existing durable wake queue, so the runner adds no second notification control plane.
 
 Discovery is never a timer.
@@ -423,7 +423,8 @@ A live identity-matched owner is never displaced, and release removes only the e
 Retirement and orphan reconciliation signal a runner process group only while its recorded process identity still matches.
 If identity cannot be established for a live PID, the operation preserves the registration and claim for safe retry.
 
-Supported secondmate retirement preflights each target home's bounded `sweep-home` command before destructive teardown, then runs the sweep at that home's final deletion or return boundary.
+Supported secondmate retirement preflights each target home's bounded `sweep-home` command before destructive teardown, snapshots its registrations outside the target, then runs the sweep at that home's final deletion or return boundary.
+If deletion or return fails, teardown restores those registrations and reconciles them before returning the refusal.
 The sweep retires local registrations and machine-wide claims physically owned by that home through the same identity-checked, generation-bound retirement path, and leaves foreign-home claims untouched.
 Teardown refuses with the home, lease, routing evidence, registrations, claims, and runners retained when identity is uncertain, ownership is unreadable or unreleased, or relevant state exists without a sweep-capable child script.
 Raw manual deletion of a Firstmate home is unsupported because it can orphan a blocking child.
@@ -432,6 +433,7 @@ To recover, restore that home's tracked `bin/fm-procevent.sh`, run `FM_HOME=<hom
 `FM_PROCEVENT_MAX_OUTPUT_BYTES` (default 1048576) bounds a single captured result while the source runs; oversized output is drained but truncated with a stderr notice rather than staged or published whole or dropped.
 
 The runner proves exactly one durability boundary: output that reached the runner is stored at mode `0600` before any event referencing it is published, and an unannounced stored result is re-announced after a restart.
+Wake publication and its announcement receipt are separate best-effort writes, so a crash between them can repeat the same source and sequence; handlers deduplicate that identity rather than assuming a wake is unique.
 It proves nothing about the source side.
 The published `lavish-axi poll` clears feedback destructively before returning it, so a result lost between that clearing and the runner reading process output is unrecoverable.
 Never describe this path as at-least-once, no-loss, or lossless.

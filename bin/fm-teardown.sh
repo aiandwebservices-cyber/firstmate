@@ -1006,24 +1006,36 @@ EOF
 }
 
 remove_firstmate_home() {
-  local home=$1 label=$2 expected_id=${3:-} abs_home_path
+  local home=$1 label=$2 expected_id=${3:-} abs_home_path process_event_backup
   [ -n "$home" ] || return 0
   [ -e "$home" ] || return 0
   abs_home_path=$(validate_firstmate_home_for_removal "$home" "$label" "$expected_id") || return 1
   [ -n "$abs_home_path" ] || return 0
-  cleanup_firstmate_home_process_events "$abs_home_path" "$label" || return 1
+  process_event_backup=$(snapshot_firstmate_home_process_events "$abs_home_path" "$label") || return 1
+  if ! cleanup_firstmate_home_process_events "$abs_home_path" "$label"; then
+    restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || true
+    return 1
+  fi
   if firstmate_home_has_treehouse_slot "$abs_home_path"; then
     command -v treehouse >/dev/null 2>&1 || {
+      restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || true
       echo "error: treehouse command not found; cannot return $label $abs_home_path" >&2
       return 1
     }
     teardown_treehouse_return "$abs_home_path" "$FM_ROOT" "$label" || {
+      restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || true
       echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
       return 1
     }
+    [ -z "$process_event_backup" ] || rm -rf -- "$process_event_backup"
     return 0
   fi
-  safe_rm_rf "$abs_home_path" "$label"
+  if safe_rm_rf "$abs_home_path" "$label"; then
+    [ -z "$process_event_backup" ] || rm -rf -- "$process_event_backup"
+    return 0
+  fi
+  restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || true
+  return 1
 }
 
 firstmate_home_has_process_events() {
@@ -1040,6 +1052,54 @@ firstmate_home_has_process_events() {
     [ "$owner" = "$home" ] && return 0
   done
   return 1
+}
+
+snapshot_firstmate_home_process_events() {
+  local home=$1 label=$2 backup path
+  if ! firstmate_home_has_process_events "$home"; then
+    printf '\n'
+    return 0
+  fi
+  backup=$(umask 077; mktemp -d "${home%/*}/.fm-procevent-restore.XXXXXX") || {
+    echo "REFUSED: cannot stage recoverable process-event state for $label $home" >&2
+    return 1
+  }
+  for path in "$home/state/procevent"/*.source; do
+    [ -e "$path" ] || continue
+    if [ ! -f "$path" ] || [ -L "$path" ] || ! cp -p -- "$path" "$backup/"; then
+      rm -rf -- "$backup"
+      echo "REFUSED: cannot preserve process-event registrations for $label $home" >&2
+      return 1
+    fi
+  done
+  printf '%s\n' "$backup"
+}
+
+restore_firstmate_home_process_events() {
+  local home=$1 label=$2 backup=$3 reg source tmp runner
+  [ -n "$backup" ] || return 0
+  [ -d "$backup" ] && [ ! -L "$backup" ] || return 1
+  reg="$home/state/procevent"
+  (umask 077; mkdir -p "$reg") || return 1
+  [ -d "$reg" ] && [ ! -L "$reg" ] || return 1
+  for source in "$backup"/*.source; do
+    [ -e "$source" ] || continue
+    [ -f "$source" ] && [ ! -L "$source" ] || return 1
+    tmp=$(umask 077; mktemp "$reg/.restore.XXXXXX") || return 1
+    if ! cp -- "$source" "$tmp" || ! chmod 0600 "$tmp" || ! mv -f -- "$tmp" "$reg/${source##*/}"; then
+      rm -f -- "$tmp"
+      return 1
+    fi
+  done
+  runner="$home/bin/fm-procevent.sh"
+  if [ ! -f "$runner" ] || [ -L "$runner" ] || [ ! -x "$runner" ]; then
+    runner="$SCRIPT_DIR/fm-procevent.sh"
+  fi
+  if ! FM_HOME="$home" FM_ROOT_OVERRIDE="$FM_ROOT" "$runner" reconcile >/dev/null; then
+    echo "error: could not rearm process-event registrations for $label $home; recover them from $backup" >&2
+    return 1
+  fi
+  rm -rf -- "$backup"
 }
 
 cleanup_firstmate_home_process_events() {

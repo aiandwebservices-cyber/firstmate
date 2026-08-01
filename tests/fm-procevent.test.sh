@@ -149,31 +149,39 @@ mode=$(PATH="${FM_TEST_BASE_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" bash -c \
   '. "$1/bin/fm-pr-lib.sh"; fm_pr_file_mode "$2"' _ "$ROOT" "$RESULT")
 assert_contains "$mode" 600 "the captured result is private"
 assert_grep 'payload one' "$RESULT" "the captured result holds the source output verbatim"
+assert_grep 'lavish' "${RESULT%.result}.adapter" "the captured result retains its immutable adapter"
 assert_present "${RESULT%.result}.announced" "a published result is marked announced"
 
 # --- restart between durable capture and handling re-announces --------------
 # Simulate the crash cut: the result is durable but its announcement never
 # landed. Recovery must re-announce it without a second durable copy.
 H2="$TMP_ROOT/h2"; new_home "$H2"
-mkdir -p "$H2/state/procevent-inbox" "$H2/state/procevent"
-printf 'adapter=lavish\nargc=1\nargv:\n/bin/true\n' > "$H2/state/procevent/src-cut.source"
-chmod 0600 "$H2/state/procevent/src-cut.source"
+mkdir -p "$H2/state/procevent-inbox"
 printf 'stranded result\n' > "$H2/state/procevent-inbox/src-cut.7.result"
-chmod 0600 "$H2/state/procevent-inbox/src-cut.7.result"
+printf 'lavish\n' > "$H2/state/procevent-inbox/src-cut.7.adapter"
+chmod 0600 "$H2/state/procevent-inbox/src-cut.7.result" "$H2/state/procevent-inbox/src-cut.7.adapter"
 out=$(pe "$H2" reconcile)
 assert_contains "$out" "published=1" "a durably captured but unannounced result is re-announced after restart"
+assert_contains "$(wake_payloads "$H2")" "procevent lavish src-cut 7" "durable adapter identity survives without a registration"
 assert_present "$H2/state/procevent-inbox/src-cut.7.announced" "recovery marks the recovered result"
 before=$(wc -l < "$H2/state/.wake-queue")
 out=$(pe "$H2" reconcile)
 assert_contains "$out" "published=0" "an already-announced result is not announced twice"
-[ "$(wc -l < "$H2/state/.wake-queue")" = "$before" ] || fail "recovery duplicated the handled effect"
+[ "$(wc -l < "$H2/state/.wake-queue")" = "$before" ] || fail "an intact publication receipt produced another wake"
 [ "$(count_results "$H2" src-cut)" = 1 ] || fail "recovery created a second durable copy"
-pass "restart recovery re-announces once without duplicating the wake"
+mv "$H2/state/.wake-queue" "$H2/state/.wake-queue.drained"
+rm -f "$H2/state/procevent-inbox/src-cut.7.announced"
+out=$(pe "$H2" reconcile)
+assert_contains "$out" "published=1" "a lost publication receipt re-announces best-effort"
+assert_contains "$(wake_payloads "$H2")" "procevent lavish src-cut 7" "a repeat wake preserves its deduplication identity"
+pass "restart recovery preserves immutable repeat-wake identity"
 
 HP="$TMP_ROOT/hp"; new_home "$HP"
 mkdir -p "$HP/state/procevent-inbox"
 for seq in 10 2 1; do
   printf '%s\n' "$seq" > "$HP/state/procevent-inbox/ordered-src.$seq.result"
+  printf 'lavish\n' > "$HP/state/procevent-inbox/ordered-src.$seq.adapter"
+  chmod 0600 "$HP/state/procevent-inbox/ordered-src.$seq.result" "$HP/state/procevent-inbox/ordered-src.$seq.adapter"
 done
 pending=$(bash -c '. "$1/bin/fm-procevent-lib.sh"; fm_procevent_pending "$2"' _ "$ROOT" "$HP/state")
 expected=$(printf '%s\n' \
@@ -181,9 +189,6 @@ expected=$(printf '%s\n' \
   "$HP/state/procevent-inbox/ordered-src.2.result" \
   "$HP/state/procevent-inbox/ordered-src.10.result")
 [ "$pending" = "$expected" ] || fail "pending results were not emitted in numeric sequence order: $pending"
-mkdir -p "$HP/state/procevent"
-printf 'adapter=lavish\nargc=1\nargv:\n/bin/false\n' > "$HP/state/procevent/ordered-src.source"
-chmod 0600 "$HP/state/procevent/ordered-src.source"
 pe "$HP" reconcile >/dev/null
 deduped=$(FM_HOME="$HP" bash -c '
   . "$1/bin/fm-wake-lib.sh"
@@ -240,15 +245,17 @@ pass "reconcile reaps a runner whose source registration is gone"
 # --- a stale claim is reclaimable, a live one is not ------------------------
 CLAIM="$FM_PROCEVENT_CLAIM_ROOT/stale-src.claim"
 mkdir -p "$FM_PROCEVENT_CLAIM_ROOT"
-printf '%s\n%s\nstale-token\nstale-identity\n' "$TMP_ROOT/gone-home" "999999" > "$CLAIM"
-chmod 0600 "$CLAIM"
 HC="$TMP_ROOT/hc"; new_home "$HC"
+printf '%s\n%s\nstale-token\nstale-identity\n' "$HC" "999999" > "$CLAIM"
+chmod 0600 "$CLAIM"
 pe_register "$HC" lavish stale-src -- /bin/echo recovered >/dev/null
+printf 'partial sensitive output\n' > "$HC/state/procevent/.stale-src.stale-token.output"
+chmod 0600 "$HC/state/procevent/.stale-src.stale-token.output"
 out=$(pe "$HC" start stale-src)
 assert_contains "$out" "captured:" "a claim whose runner is gone is reclaimable"
-owner=$(head -1 "$CLAIM" 2>/dev/null || true)
-[ "$owner" != "$TMP_ROOT/gone-home" ] || fail "the stale owner was not replaced"
-pass "stale-owner recovery works and cannot displace a live owner"
+assert_absent "$CLAIM" "the replacement claim generation is released after completion"
+assert_absent "$HC/state/procevent/.stale-src.stale-token.output" "stale claim recovery removes its abandoned staging generation"
+pass "stale-owner recovery removes abandoned output without displacing a live owner"
 
 HR="$TMP_ROOT/hr"; new_home "$HR"
 RACE_TRIGGER="$TMP_ROOT/race-trigger"
@@ -522,7 +529,14 @@ ART_ALIAS="$TMP_ROOT/artifact-alias.html"
 ln -s "$ART" "$ART_ALIAS"
 sid3=$(FM_HOME="$TMP_ROOT/hg" "$ROOT/bin/fm-procevent-lavish.sh" source-id "$ART_ALIAS")
 [ "$sid" = "$sid3" ] || fail "a final-component symlink produced a second source id"
-pass "the adapter derives a stable physical source id"
+ART_NEWLINE="$TMP_ROOT/line-ending"$'\n'
+printf '<h1>newline fixture</h1>\n' > "$ART_NEWLINE"
+printf '<h1>sibling fixture</h1>\n' > "$TMP_ROOT/line-ending"
+newline_artifact_status=0
+newline_artifact_out=$("$ROOT/bin/fm-procevent-lavish.sh" source-id "$ART_NEWLINE" 2>&1) || newline_artifact_status=$?
+[ "$newline_artifact_status" -ne 0 ] || fail "Lavish source identity accepted an artifact path ending in a newline"
+assert_contains "$newline_artifact_out" "cannot contain newlines" "Lavish rejects newline paths before canonicalization"
+pass "the adapter derives physical identity without newline path corruption"
 
 HS="$TMP_ROOT/hs"; new_home "$HS"
 mkdir -p "$HS/state/procevent"
