@@ -51,7 +51,6 @@ Supported by tests:
 - a durably stored but unannounced result is re-announced after a restart, without duplicating the handled effect;
 - one identity-matched owner per canonical source, across homes that share one underlying source store;
 - registration and ownership transitions share one per-source boundary, release is generation-bound, and uncertain process identity preserves the source for retry;
-- supervision continues while this home has a registration, an owned claim, or an unannounced durable result;
 - stored argv is executed directly, so an argument containing spaces or shell metacharacters is never re-split or interpreted;
 - oversized output is bounded rather than published whole or silently dropped.
 

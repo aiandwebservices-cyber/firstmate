@@ -51,10 +51,14 @@ pe_register() {  # <home> <adapter> <source-id> -- <argv>...
 }
 
 procevent_teardown() {
-  local entry home id
+  local entry home seen=$'\n'
   for entry in ${PE_TRACKED[@]+"${PE_TRACKED[@]}"}; do
-    home=${entry%%|*}; id=${entry#*|}
-    FM_HOME="$home" "$ROOT/bin/fm-procevent.sh" retire "$id" >/dev/null 2>&1 || true
+    home=${entry%%|*}
+    case "$seen" in
+      *$'\n'"$home"$'\n'*) continue ;;
+    esac
+    seen+="$home"$'\n'
+    FM_HOME="$home" "$ROOT/bin/fm-procevent.sh" sweep-home >/dev/null 2>&1 || true
   done
   fm_test_cleanup
 }
@@ -207,57 +211,6 @@ for _ in $(seq 1 40); do kill -0 "$orphan_pid" 2>/dev/null || break; sleep 0.1; 
 kill -0 "$orphan_pid" 2>/dev/null && fail "reconcile left an orphaned runner alive"
 pass "reconcile reaps a runner whose source registration is gone"
 
-HO="$TMP_ROOT/ho"; new_home "$HO"
-ORPHAN_UNCERTAIN_TRIGGER="$TMP_ROOT/orphan-uncertain-trigger"
-pe_register "$HO" lavish orphan-uncertain-src -- "$BLOCKER" "$ORPHAN_UNCERTAIN_TRIGGER" "uncertain orphan" >/dev/null
-pe "$HO" reconcile >/dev/null
-wait_for "$FM_PROCEVENT_CLAIM_ROOT/orphan-uncertain-src.claim" || fail "uncertain orphan runner did not claim its source"
-orphan_uncertain_pid=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/orphan-uncertain-src.claim")
-ORPHAN_FAKEBIN=$(fm_fakebin "$TMP_ROOT/orphan-identity-tools")
-cat > "$ORPHAN_FAKEBIN/ps" <<'SH'
-#!/usr/bin/env bash
-exit 1
-SH
-chmod +x "$ORPHAN_FAKEBIN/ps"
-rm -f "$HO/state/procevent/orphan-uncertain-src.source"
-out=$(PATH="$ORPHAN_FAKEBIN:$PATH" FM_PROC_ROOT_OVERRIDE="$TMP_ROOT/no-orphan-proc" pe "$HO" reconcile)
-assert_contains "$out" "uncertain=1" "uncertain orphan cleanup remains pending"
-kill -0 "$orphan_uncertain_pid" 2>/dev/null || fail "uncertain orphan cleanup signaled an unverified runner"
-sup=$(FM_HOME="$HO" bash -c \
-  '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_status "$2/state" 300 "$2"; printf "%s:%s:%s:%s\n" "$FM_SUP_NEEDED" "$FM_SUP_REGISTRATIONS" "$FM_SUP_OWNED_CLAIMS" "$FM_SUP_PENDING_RESULTS"' \
-  _ "$ROOT" "$HO")
-assert_contains "$sup" "true:0:1:0" "owned claim keeps source-only supervision active after registration removal"
-guard_out=$(FM_ROOT_OVERRIDE="$TMP_ROOT/guard-root" FM_HOME="$HO" FM_GUARD_GRACE=1 \
-  "$ROOT/bin/fm-guard.sh" 2>&1)
-assert_contains "$guard_out" "registrations=0, owned claims=1, unannounced results=0" \
-  "general guard reports the continuing owned-claim obligation"
-out=$(pe "$HO" reconcile)
-assert_contains "$out" "stopped=1" "identity recovery completes deferred orphan cleanup"
-for _ in $(seq 1 40); do kill -0 "$orphan_uncertain_pid" 2>/dev/null || break; sleep 0.1; done
-kill -0 "$orphan_uncertain_pid" 2>/dev/null && fail "eventual orphan cleanup left the runner alive"
-assert_absent "$FM_PROCEVENT_CLAIM_ROOT/orphan-uncertain-src.claim" "eventual orphan cleanup releases the claim"
-sup=$(FM_HOME="$HO" bash -c \
-  '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_needed "$2/state" 300 "$2" && echo yes || echo no' \
-  _ "$ROOT" "$HO")
-assert_contains "$sup" "no" "supervision ends after the final cleanup obligation clears"
-pass "owned orphan claims preserve supervision until cleanup succeeds"
-
-HP="$TMP_ROOT/hp"; new_home "$HP"
-mkdir -p "$HP/state/procevent-inbox"
-printf 'pending without registration\n' > "$HP/state/procevent-inbox/pending-src.1.result"
-chmod 0600 "$HP/state/procevent-inbox/pending-src.1.result"
-sup=$(FM_HOME="$HP" bash -c \
-  '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_status "$2/state" 300 "$2"; printf "%s:%s:%s:%s\n" "$FM_SUP_NEEDED" "$FM_SUP_REGISTRATIONS" "$FM_SUP_OWNED_CLAIMS" "$FM_SUP_PENDING_RESULTS"' \
-  _ "$ROOT" "$HP")
-assert_contains "$sup" "true:0:0:1" "unannounced result keeps supervision active without registration or claim"
-out=$(pe "$HP" reconcile)
-assert_contains "$out" "published=1" "reconcile publishes the unannounced result obligation"
-sup=$(FM_HOME="$HP" bash -c \
-  '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_needed "$2/state" 300 "$2" && echo yes || echo no' \
-  _ "$ROOT" "$HP")
-assert_contains "$sup" "no" "announcing the final durable result clears its supervision obligation"
-pass "unannounced results preserve supervision until publication"
-
 # --- a stale claim is reclaimable, a live one is not ------------------------
 CLAIM="$FM_PROCEVENT_CLAIM_ROOT/stale-src.claim"
 mkdir -p "$FM_PROCEVENT_CLAIM_ROOT"
@@ -386,6 +339,70 @@ assert_present "$FM_PROCEVENT_CLAIM_ROOT/identity-src.claim" "uncertain retireme
 pe "$HL" retire identity-src >/dev/null
 pass "transient identity failure preserves the live source for retry"
 
+HM="$TMP_ROOT/hm"; new_home "$HM"
+SWEEP_TRIGGER_ONE="$TMP_ROOT/sweep-trigger-one"
+SWEEP_TRIGGER_TWO="$TMP_ROOT/sweep-trigger-two"
+pe_register "$HM" lavish sweep-one -- "$BLOCKER" "$SWEEP_TRIGGER_ONE" "sweep one" >/dev/null
+pe_register "$HM" lavish sweep-two -- "$BLOCKER" "$SWEEP_TRIGGER_TWO" "sweep two" >/dev/null
+pe "$HM" reconcile >/dev/null
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/sweep-one.claim" || fail "home sweep fixture one did not start"
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/sweep-two.claim" || fail "home sweep fixture two did not start"
+sweep_pid_one=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/sweep-one.claim")
+sweep_pid_two=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/sweep-two.claim")
+rm -f "$HM/state/procevent/sweep-two.source"
+out=$(pe "$HM" sweep-home)
+assert_contains "$out" "swept: attempted=2" "home sweep retires registrations and owned claim-only sources"
+for sweep_pid in "$sweep_pid_one" "$sweep_pid_two"; do
+  for _ in $(seq 1 40); do kill -0 "$sweep_pid" 2>/dev/null || break; sleep 0.1; done
+  kill -0 "$sweep_pid" 2>/dev/null && fail "home sweep left a runner alive"
+done
+assert_absent "$HM/state/procevent/sweep-one.source" "home sweep removes registrations"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/sweep-one.claim" "home sweep releases the first claim"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/sweep-two.claim" "home sweep releases a claim with no registration"
+pass "bounded home sweep retires every locally owned source"
+
+HN="$TMP_ROOT/hn"; HO="$TMP_ROOT/ho"; new_home "$HN"; new_home "$HO"
+FOREIGN_TRIGGER="$TMP_ROOT/foreign-trigger"
+pe_register "$HN" lavish foreign-src -- "$BLOCKER" "$FOREIGN_TRIGGER" "foreign" >/dev/null
+pe_register "$HO" lavish foreign-src -- "$BLOCKER" "$FOREIGN_TRIGGER" "foreign" >/dev/null
+pe "$HN" reconcile >/dev/null
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/foreign-src.claim" || fail "foreign-owner fixture did not start"
+foreign_pid=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/foreign-src.claim")
+out=$(pe "$HO" sweep-home)
+assert_contains "$out" "swept: attempted=1" "home sweep retires the local registration"
+kill -0 "$foreign_pid" 2>/dev/null || fail "home sweep signaled a foreign-home runner"
+assert_present "$FM_PROCEVENT_CLAIM_ROOT/foreign-src.claim" "home sweep preserves a foreign-home claim"
+[ "$(sed -n '1p' "$FM_PROCEVENT_CLAIM_ROOT/foreign-src.claim")" = "$HN" ] || fail "home sweep changed foreign claim ownership"
+assert_absent "$HO/state/procevent/foreign-src.source" "home sweep removes only the local registration"
+pe "$HN" retire foreign-src >/dev/null
+pass "home sweep leaves foreign-home claims and runners untouched"
+
+HU="$TMP_ROOT/hu"; new_home "$HU"
+SWEEP_UNCERTAIN_TRIGGER="$TMP_ROOT/sweep-uncertain-trigger"
+pe_register "$HU" lavish sweep-uncertain -- "$BLOCKER" "$SWEEP_UNCERTAIN_TRIGGER" "uncertain" >/dev/null
+pe "$HU" reconcile >/dev/null
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/sweep-uncertain.claim" || fail "uncertain sweep fixture did not start"
+sweep_uncertain_pid=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/sweep-uncertain.claim")
+sweep_status=0
+sweep_out=$(PATH="$IDENTITY_FAKEBIN:$PATH" FM_PROC_ROOT_OVERRIDE="$TMP_ROOT/no-sweep-proc" \
+  pe "$HU" sweep-home 2>&1) || sweep_status=$?
+[ "$sweep_status" -ne 0 ] || fail "home sweep succeeded with an uncertain runner identity"
+assert_contains "$sweep_out" "home sweep preflight failed" "uncertain home sweep reports a retryable refusal"
+kill -0 "$sweep_uncertain_pid" 2>/dev/null || fail "uncertain home sweep signaled the runner"
+assert_present "$HU/state/procevent/sweep-uncertain.source" "uncertain home sweep preserves registration"
+assert_present "$FM_PROCEVENT_CLAIM_ROOT/sweep-uncertain.claim" "uncertain home sweep preserves the claim"
+pe "$HU" sweep-home >/dev/null
+pass "home sweep refuses safely until runner identity is readable"
+
+HV="$TMP_ROOT/hv"; new_home "$HV"
+mkdir -p "$HV/state/procevent-inbox"
+printf 'already captured\n' > "$HV/state/procevent-inbox/result-only.1.result"
+sup=$(bash -c '. "$1/bin/fm-supervision-lib.sh"; fm_supervision_needed "$2" && echo yes || echo no' _ "$ROOT" "$HV/state")
+assert_contains "$sup" no "registration-free results do not broaden continuous supervision"
+out=$(pe "$HV" sweep-home)
+assert_contains "$out" "swept: attempted=0" "result-only homes need no process cleanup"
+pass "healthy runtime behavior remains registration-only"
+
 # --- argv boundaries, stderr, exit status, bounds, malformed output ---------
 HD="$TMP_ROOT/hd"; new_home "$HD"
 TRIG3="$TMP_ROOT/trigger-three"
@@ -436,7 +453,7 @@ guard_out=$(FM_ROOT_OVERRIDE="$TMP_ROOT/guard-root" FM_HOME="$HS" FM_GUARD_GRACE
   "$ROOT/bin/fm-guard.sh" 2>&1)
 assert_contains "$guard_out" "WATCHER DOWN - SUPERVISION IS OFF" \
   "the general guard warns when only a process-event source needs supervision"
-assert_contains "$guard_out" "1 process-event obligation(s) remain" \
+assert_contains "$guard_out" "1 process-event source(s) registered" \
   "the general guard identifies the source-only supervision need"
 pass "source-only homes trigger the general supervision guard"
 

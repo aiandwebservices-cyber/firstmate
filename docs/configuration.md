@@ -410,12 +410,10 @@ A long-polling external process is registered as a *source* through its adapter,
 This section is the single owner of the runner's operating contract.
 Registration writes one private record under `state/procevent/`, and a completed result is captured under `state/procevent-inbox/` before it is published.
 Results are published as ordinary `check` wakes through the existing durable wake queue, so the runner adds no second notification control plane.
-This home's continuing cleanup and supervision obligation is the union of its local registrations, machine-wide claims owned by this home, and unannounced durable results.
-Removing a registration does not end responsibility while an owned claim, live child, or undelivered result remains.
 
 Discovery is never a timer.
 Each registered source has its own child process blocking on that source, and the watcher's per-cycle `reconcile` only republishes results already captured durably and restarts a source whose owner is gone.
-A home with no registration, owned claim, or unannounced result runs nothing, generates no state, and keeps its ordinary cadence.
+A home with no registered source runs nothing, generates no state, and keeps its ordinary cadence.
 
 Ownership is machine-wide per canonical source, because separate homes can share one underlying source store.
 Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `FM_PROCEVENT_CLAIM_ROOT`).
@@ -424,6 +422,12 @@ Registration, acquisition, replacement, retirement, and generation-bound release
 A live identity-matched owner is never displaced, and release removes only the exact generation the caller acquired.
 Retirement and orphan reconciliation signal a runner process group only while its recorded process identity still matches.
 If identity cannot be established for a live PID, the operation preserves the registration and claim for safe retry.
+
+Supported secondmate retirement runs the target home's bounded `sweep-home` command before deleting or returning that home.
+The sweep retires local registrations and machine-wide claims physically owned by that home through the same identity-checked, generation-bound retirement path, and leaves foreign-home claims untouched.
+Teardown refuses with the home, lease, routing evidence, registrations, claims, and runners retained when identity is uncertain, ownership is unreadable or unreleased, or relevant state exists without a sweep-capable child script.
+Raw manual deletion of a Firstmate home is unsupported because it can orphan a blocking child.
+To recover, restore that home's tracked `bin/fm-procevent.sh`, run `FM_HOME=<home> <home>/bin/fm-procevent.sh sweep-home`, then rerun the supported teardown.
 
 `FM_PROCEVENT_MAX_OUTPUT_BYTES` (default 1048576) bounds a single captured result; oversized output is truncated with a stderr notice rather than published whole or dropped.
 

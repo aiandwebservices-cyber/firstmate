@@ -8,6 +8,7 @@
 #   fm-procevent.sh start <source-id>
 #   fm-procevent.sh reconcile
 #   fm-procevent.sh retire <source-id>
+#   fm-procevent.sh sweep-home
 #   fm-procevent.sh list
 #
 # register   Record a source: its adapter, its canonical id, and the exact argv
@@ -24,6 +25,9 @@
 #            liveness repair only - it never discovers results by polling the
 #            source, because the child blocks on the source itself.
 # retire     Drop a registration, stop a runner this home owns, release the claim.
+# sweep-home Retire a bounded snapshot of this home's registrations and owned
+#            claims, then refuse unless no registration, runner record, or owned
+#            claim remains. Used by supported Firstmate home retirement.
 # list       Show registered sources, owners, and pending captured results.
 #
 # Ownership is machine-wide per canonical source, because separate Firstmate
@@ -51,7 +55,7 @@ REG=$(fm_procevent_registry_dir "$STATE")
 MAX_OUTPUT_BYTES=${FM_PROCEVENT_MAX_OUTPUT_BYTES:-1048576}
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
-usage() { sed -n '2,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 2; }
 
 adapter_script() { printf '%s/bin/fm-procevent-%s.sh\n' "$FM_ROOT" "$1"; }
 
@@ -354,6 +358,109 @@ cmd_retire() {
   printf 'retired: %s\n' "$id"
 }
 
+sweep_add_id() {
+  local id=$1
+  case "$SWEEP_IDS" in
+    *$'\n'"$id"$'\n'*) ;;
+    *) SWEEP_IDS+="$id"$'\n' ;;
+  esac
+}
+
+sweep_relevant_state() {
+  local path owner
+  for path in "$REG"/*.source "$REG"/*.runner; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      return 0
+    fi
+  done
+  for path in "$(fm_procevent_claim_root)"/*.claim; do
+    [ -f "$path" ] && [ ! -L "$path" ] || continue
+    IFS= read -r owner < "$path" 2>/dev/null || continue
+    [ "$owner" = "$FM_HOME" ] && return 0
+  done
+  return 1
+}
+
+sweep_source_preflight() {
+  local id=$1 state
+  fm_procevent_source_lock_acquire "$id" || return 1
+  if [ -e "$(fm_procevent_claim_path "$id")" ] || [ -L "$(fm_procevent_claim_path "$id")" ]; then
+    if ! fm_procevent_claim_load_locked "$id" 2>/dev/null; then
+      fm_procevent_source_lock_release "$id"
+      return 1
+    fi
+    if [ "$FM_PROCEVENT_CLAIM_HOME" = "$FM_HOME" ]; then
+      fm_procevent_pid_state "$FM_PROCEVENT_CLAIM_PID" "$FM_PROCEVENT_CLAIM_IDENTITY"
+      state=$?
+      if [ "$state" -eq 2 ]; then
+        fm_procevent_source_lock_release "$id"
+        return 1
+      fi
+    fi
+  fi
+  fm_procevent_source_lock_release "$id"
+}
+
+cmd_sweep_home() {
+  local path id owner attempted=0 failed=0
+  SWEEP_IDS=$'\n'
+  for path in "$REG"/*.source; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      id=${path##*/}; id=${id%.source}
+      if fm_procevent_source_id_valid "$id"; then
+        sweep_add_id "$id"
+      else
+        failed=$((failed + 1))
+      fi
+    fi
+  done
+  for path in "$(fm_procevent_claim_root)"/*.claim; do
+    [ -f "$path" ] && [ ! -L "$path" ] || continue
+    IFS= read -r owner < "$path" 2>/dev/null || continue
+    [ "$owner" = "$FM_HOME" ] || continue
+    id=${path##*/}; id=${id%.claim}
+    if fm_procevent_source_id_valid "$id"; then
+      sweep_add_id "$id"
+    else
+      failed=$((failed + 1))
+    fi
+  done
+  for path in "$REG"/*.runner; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      id=${path##*/}; id=${id%.runner}
+      if ! fm_procevent_source_id_valid "$id"; then
+        failed=$((failed + 1))
+      else
+        case "$SWEEP_IDS" in
+          *$'\n'"$id"$'\n'*) ;;
+          *) failed=$((failed + 1)) ;;
+        esac
+      fi
+    fi
+  done
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    sweep_source_preflight "$id" || failed=$((failed + 1))
+  done <<< "$SWEEP_IDS"
+  if [ "$failed" -ne 0 ]; then
+    printf 'error: process-event home sweep preflight failed: attempted=0 failed=%s\n' "$failed" >&2
+    return 1
+  fi
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    attempted=$((attempted + 1))
+    if ! FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+        "$SCRIPT_DIR/fm-procevent.sh" retire "$id"; then
+      failed=$((failed + 1))
+    fi
+  done <<< "$SWEEP_IDS"
+  if [ "$failed" -ne 0 ] || sweep_relevant_state; then
+    printf 'error: process-event home sweep incomplete: attempted=%s failed=%s\n' "$attempted" "$failed" >&2
+    return 1
+  fi
+  printf 'swept: attempted=%s\n' "$attempted"
+}
+
 cmd_list() {
   local rec id adapter owner pending
   if ! fm_procevent_any_registered "$STATE"; then
@@ -379,6 +486,7 @@ case "${1-}" in
   start)     shift; cmd_start "$@" ;;
   reconcile) shift; cmd_reconcile "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
+  sweep-home) shift; [ "$#" -eq 0 ] || usage; cmd_sweep_home ;;
   list)      shift; cmd_list "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;

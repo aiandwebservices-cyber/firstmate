@@ -21,6 +21,20 @@ file_mode() {
   fi
 }
 
+install_fake_process_event_sweep() {
+  local home=$1 log=$2
+  mkdir -p "$home/bin"
+  cat > "$home/bin/fm-procevent.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[ "${1:-}" = sweep-home ] || exit 2
+printf '%s\n' "$FM_HOME" >> "$FM_FAKE_PROCEVENT_SWEEP_LOG"
+rm -f -- "$FM_HOME"/state/procevent/*.source "$FM_HOME"/state/procevent/*.runner
+SH
+  chmod +x "$home/bin/fm-procevent.sh"
+  : > "$log"
+}
+
 test_fm_home_parameterization() {
   local brief home_one home_two out
   home_one="$TMP_ROOT/home one"
@@ -1316,6 +1330,97 @@ EOF
   pass "secondmate teardown retires empty homes and releases routing"
 }
 
+test_secondmate_teardown_sweeps_process_events_before_removal() {
+  local home subhome fakebin log sweep_log
+  home="$TMP_ROOT/procevent-teardown-home"
+  subhome="$TMP_ROOT/procevent-teardown-subhome"
+  sweep_log="$TMP_ROOT/procevent-teardown-sweep.log"
+  mkdir -p "$home/state" "$home/data" "$subhome/state/procevent"
+  mark_firstmate_home "$subhome"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'adapter=lavish\n' > "$subhome/state/procevent/source.source"
+  printf 'runner\n' > "$subhome/state/procevent/source.runner"
+  install_fake_process_event_sweep "$subhome" "$sweep_log"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/procevent-teardown-fake")
+  log="$TMP_ROOT/procevent-teardown-fake/tmux.log"
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/procevent-teardown-fake/pane.txt" \
+    FM_FAKE_PROCEVENT_SWEEP_LOG="$sweep_log" \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>/dev/null \
+    || fail "normal secondmate teardown failed after process-event sweep"
+  grep -Fx "$subhome" "$sweep_log" >/dev/null || fail "normal secondmate teardown did not invoke the child home's sweep"
+  [ ! -d "$subhome" ] || fail "normal secondmate teardown retained a successfully swept home"
+  [ ! -e "$home/state/domain.meta" ] || fail "normal swept teardown retained parent evidence"
+  pass "normal secondmate teardown sweeps process events before removal"
+}
+
+test_secondmate_teardown_refuses_process_events_without_sweep_script() {
+  local home subhome fakebin log err claim_root
+  home="$TMP_ROOT/procevent-refusal-home"
+  subhome="$TMP_ROOT/procevent-refusal-subhome"
+  err="$TMP_ROOT/procevent-refusal.err"
+  claim_root="$TMP_ROOT/procevent-refusal-claims"
+  mkdir -p "$home/state" "$home/data" "$subhome/state/procevent" "$claim_root"
+  mark_firstmate_home "$subhome"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'adapter=lavish\n' > "$subhome/state/procevent/source.source"
+  printf '%s\n999999\ntoken\nidentity\n' "$subhome" > "$claim_root/source.claim"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/procevent-refusal-fake")
+  log="$TMP_ROOT/procevent-refusal-fake/tmux.log"
+
+  if PATH="$fakebin:$PATH" FM_HOME="$home" FM_PROCEVENT_CLAIM_ROOT="$claim_root" \
+      FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/procevent-refusal-fake/pane.txt" \
+      "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>"$err"; then
+    fail "force teardown removed process-event state without a sweep-capable child script"
+  fi
+  grep -F 'no sweep-capable bin/fm-procevent.sh' "$err" >/dev/null || fail "missing sweep capability refusal was not explained"
+  [ -d "$subhome" ] || fail "missing sweep capability refusal removed the home"
+  [ -e "$home/state/domain.meta" ] || fail "missing sweep capability refusal removed parent evidence"
+  grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null || fail "missing sweep capability refusal removed the route"
+  [ -e "$subhome/state/procevent/source.source" ] || fail "missing sweep capability refusal removed the registration"
+  [ -e "$claim_root/source.claim" ] || fail "missing sweep capability refusal removed the claim"
+  grep -F 'kill-window' "$log" >/dev/null && fail "missing sweep capability refusal killed a runtime endpoint"
+  pass "secondmate teardown preserves state when process-event sweeping is unavailable"
+}
+
+test_secondmate_force_teardown_sweeps_nested_homes() {
+  local home subhome childhome fakebin log sweep_log
+  home="$TMP_ROOT/procevent-force-home"
+  subhome="$TMP_ROOT/procevent-force-subhome"
+  childhome="$TMP_ROOT/procevent-force-childhome"
+  sweep_log="$TMP_ROOT/procevent-force-sweep.log"
+  mkdir -p "$home/state" "$home/data" "$subhome/state/procevent" "$childhome/state/procevent"
+  mark_firstmate_home "$subhome"
+  mark_firstmate_home "$childhome"
+  printf 'domain\n' > "$subhome/.fm-secondmate-home"
+  printf 'nested\n' > "$childhome/.fm-secondmate-home"
+  printf 'adapter=lavish\n' > "$subhome/state/procevent/parent-source.source"
+  printf 'adapter=lavish\n' > "$childhome/state/procevent/child-source.source"
+  install_fake_process_event_sweep "$subhome" "$sweep_log"
+  install_fake_process_event_sweep "$childhome" "$sweep_log"
+  fm_write_secondmate_meta "$home/state/domain.meta" "$subhome"
+  fm_write_secondmate_meta "$subhome/state/nested.meta" "$childhome"
+  printf '%s\n' '- domain - design domain (home: '"$subhome"'; scope: design domain; projects: alpha; added 2026-06-22)' > "$home/data/secondmates.md"
+  fakebin=$(make_fake_tmux "$TMP_ROOT/procevent-force-fake")
+  log="$TMP_ROOT/procevent-force-fake/tmux.log"
+
+  PATH="$fakebin:$PATH" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" \
+    FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/procevent-force-fake/pane.txt" \
+    FM_FAKE_PROCEVENT_SWEEP_LOG="$sweep_log" \
+    "$ROOT/bin/fm-teardown.sh" domain --force >/dev/null 2>/dev/null \
+    || fail "force teardown failed after recursively sweeping process events"
+  grep -Fx "$subhome" "$sweep_log" >/dev/null || fail "force teardown did not sweep the parent secondmate home"
+  grep -Fx "$childhome" "$sweep_log" >/dev/null || fail "force teardown did not sweep the nested secondmate home"
+  [ ! -d "$subhome" ] || fail "force teardown retained the swept parent home"
+  [ ! -d "$childhome" ] || fail "force teardown retained the swept nested home"
+  pass "force teardown sweeps nested secondmate homes before deletion"
+}
+
 test_secondmate_teardown_refuses_failed_leased_home_return() {
   local home subhome subhome_abs fakebin log fmroot err rc
   home="$TMP_ROOT/teardown-return-fail-home"
@@ -2205,6 +2310,9 @@ test_secondmate_spawn_requires_seeded_matching_home
 test_secondmate_spawn_refuses_operational_dirs_outside_subhome
 test_fm_send_refuses_bare_window_without_home_meta
 test_secondmate_teardown_retires_empty_home
+test_secondmate_teardown_sweeps_process_events_before_removal
+test_secondmate_teardown_refuses_process_events_without_sweep_script
+test_secondmate_force_teardown_sweeps_nested_homes
 test_secondmate_teardown_refuses_failed_leased_home_return
 test_secondmate_teardown_removes_plain_clone_home_without_treehouse_return
 test_secondmate_force_teardown_discards_child_work

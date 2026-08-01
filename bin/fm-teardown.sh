@@ -1011,6 +1011,7 @@ remove_firstmate_home() {
   [ -e "$home" ] || return 0
   abs_home_path=$(validate_firstmate_home_for_removal "$home" "$label" "$expected_id") || return 1
   [ -n "$abs_home_path" ] || return 0
+  cleanup_firstmate_home_process_events "$abs_home_path" "$label" || return 1
   if firstmate_home_has_treehouse_slot "$abs_home_path"; then
     command -v treehouse >/dev/null 2>&1 || {
       echo "error: treehouse command not found; cannot return $label $abs_home_path" >&2
@@ -1023,6 +1024,57 @@ remove_firstmate_home() {
     return 0
   fi
   safe_rm_rf "$abs_home_path" "$label"
+}
+
+firstmate_home_has_process_events() {
+  local home=$1 path owner claim_root
+  for path in "$home/state/procevent"/*.source "$home/state/procevent"/*.runner; do
+    if [ -e "$path" ] || [ -L "$path" ]; then
+      return 0
+    fi
+  done
+  claim_root=${FM_PROCEVENT_CLAIM_ROOT:-${XDG_STATE_HOME:-$HOME/.local/state}/firstmate/procevent-claims}
+  for path in "$claim_root"/*.claim; do
+    [ -f "$path" ] && [ ! -L "$path" ] || continue
+    IFS= read -r owner < "$path" 2>/dev/null || continue
+    [ "$owner" = "$home" ] && return 0
+  done
+  return 1
+}
+
+cleanup_firstmate_home_process_events() {
+  local home=$1 label=$2 runner="$1/bin/fm-procevent.sh"
+  firstmate_home_has_process_events "$home" || return 0
+  if [ ! -f "$runner" ] || [ -L "$runner" ] || [ ! -x "$runner" ]; then
+    echo "REFUSED: $label $home has process-event state but no sweep-capable bin/fm-procevent.sh; restore the home script and rerun teardown" >&2
+    return 1
+  fi
+  if ! FM_HOME="$home" FM_ROOT_OVERRIDE="$home" "$runner" sweep-home; then
+    echo "REFUSED: process-event cleanup is incomplete for $label $home; preserving the home, lease, and retirement records for retry" >&2
+    return 1
+  fi
+  if firstmate_home_has_process_events "$home"; then
+    echo "REFUSED: process-event state remains for $label $home after its bounded sweep; preserving the home, lease, and retirement records for retry" >&2
+    return 1
+  fi
+}
+
+cleanup_firstmate_home_process_event_tree() {
+  local home=$1 label=$2 sub_state child_meta child_kind child_home child_wt child_id
+  sub_state="$home/state"
+  if [ -d "$sub_state" ]; then
+    for child_meta in "$sub_state"/*.meta; do
+      [ -e "$child_meta" ] || continue
+      child_kind=$(meta_value "$child_meta" kind)
+      [ "$child_kind" = secondmate ] || continue
+      child_id=$(basename "$child_meta" .meta)
+      child_wt=$(meta_value "$child_meta" worktree)
+      child_home=$(meta_value "$child_meta" home)
+      [ -n "$child_home" ] || child_home=$child_wt
+      cleanup_firstmate_home_process_event_tree "$child_home" "child firstmate home for $child_id" || return 1
+    done
+  fi
+  cleanup_firstmate_home_process_events "$home" "$label"
 }
 
 validate_firstmate_home_children_removal() {
@@ -1315,6 +1367,10 @@ if [ "$KIND" = secondmate ] && [ "$FORCE" != "--force" ]; then
       exit 1
     done
   fi
+fi
+
+if [ "$KIND" = secondmate ]; then
+  cleanup_firstmate_home_process_event_tree "$HOME_PATH" "secondmate home" || exit 1
 fi
 
 if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then

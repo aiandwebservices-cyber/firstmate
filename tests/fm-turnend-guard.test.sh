@@ -17,7 +17,6 @@ set -u
 . "$ROOT/bin/fm-supervision-lib.sh"
 
 TMP_ROOT=$(fm_test_tmproot fm-turnend-guard)
-export FM_PROCEVENT_CLAIM_ROOT="$TMP_ROOT/procevent-claims"
 fm_git_identity fmtest fmtest@example.invalid
 
 REQUIRED_REASON='repair missing watcher supervision with bin/fm-watch-arm.sh as its own Claude Code background task'
@@ -115,7 +114,6 @@ install_guard_scripts() {
   cp "$ROOT/bin/fm-harness.sh" "$dir/bin/fm-harness.sh"
   cp "$ROOT/bin/fm-primary-scope-lib.sh" "$dir/bin/fm-primary-scope-lib.sh"
   cp "$ROOT/bin/fm-supervision-lib.sh" "$dir/bin/fm-supervision-lib.sh"
-  cp "$ROOT/bin/fm-procevent-lib.sh" "$dir/bin/fm-procevent-lib.sh"
   cp "$ROOT/bin/fm-wake-lib.sh" "$dir/bin/fm-wake-lib.sh"
   mkdir -p "$dir/docs"
   cp -R "$ROOT/docs/supervision-protocols" "$dir/docs/supervision-protocols"
@@ -247,7 +245,7 @@ test_hook_blocks_source_only_home() {
   : > "$dir/state/procevent/source-only.source"
   out=$(run_hook "$dir" false); status=$?
   expect_code 2 "$status" "non-Claude hook must block when a source-only home has no watcher"
-  assert_contains "$out" "1 process-event obligation(s) remain" "block reason must identify the source-only supervision need"
+  assert_contains "$out" "1 process-event source(s) registered" "block reason must identify the source-only supervision need"
   pass "fm-turnend-guard: non-Claude path blocks a source-only home"
 }
 

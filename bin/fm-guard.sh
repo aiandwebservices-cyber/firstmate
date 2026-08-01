@@ -144,7 +144,7 @@ fi
 # grace-based predicate (bin/fm-supervision-lib.sh). Only act with tasks in
 # flight; count them so the banner can say how much is riding on an absent
 # watcher.
-fm_supervision_status "$STATE" "$GRACE" "$FM_HOME"
+fm_supervision_status "$STATE" "$GRACE"
 in_flight=$FM_SUP_IN_FLIGHT
 sources=$FM_SUP_SOURCES
 needed=$FM_SUP_NEEDED
@@ -192,8 +192,7 @@ if [ "$watcher_fresh" = false ]; then
       if [ "$in_flight" -gt 0 ]; then
         printf '●  %s task(s) in flight, but no watcher has a fresh beacon (last beat: %s, grace %ss).\n' "$in_flight" "$beacon_desc" "$GRACE"
       elif [ "$sources" -gt 0 ]; then
-        printf '●  %s process-event obligation(s) remain (registrations=%s, owned claims=%s, unannounced results=%s), but no watcher has a fresh beacon (last beat: %s, grace %ss).\n' \
-          "$sources" "$FM_SUP_REGISTRATIONS" "$FM_SUP_OWNED_CLAIMS" "$FM_SUP_PENDING_RESULTS" "$beacon_desc" "$GRACE"
+        printf '●  %s process-event source(s) registered, but no watcher has a fresh beacon (last beat: %s, grace %ss).\n' "$sources" "$beacon_desc" "$GRACE"
       else
         printf '●  X-mode relay polling needs supervision, but no watcher has a fresh beacon (last beat: %s, grace %ss).\n' "$beacon_desc" "$GRACE"
       fi
