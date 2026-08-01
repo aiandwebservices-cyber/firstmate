@@ -86,6 +86,23 @@ wait_for() {  # <file> [tries]
   return 1
 }
 
+hold_source_lock() {  # <source-id> <ready-file> <release-file>
+  local id=$1 ready=$2 release=$3 parent=$$
+  FM_HOME="$TMP_ROOT/lock-helper-home" bash -c '
+    . "$1/bin/fm-pr-lib.sh"
+    . "$1/bin/fm-wake-lib.sh"
+    . "$1/bin/fm-procevent-lib.sh"
+    fm_procevent_source_lock_acquire "$2" || exit 1
+    trap '\''fm_procevent_source_lock_release "$2"'\'' EXIT
+    printf 'ready\n' > "$3"
+    while [ ! -e "$4" ]; do
+      kill -0 "$5" 2>/dev/null || exit 0
+      sleep 0.02
+    done
+  ' _ "$ROOT" "$id" "$ready" "$release" "$parent" &
+  HOLDER_PID=$!
+}
+
 # --- inert with nothing configured ------------------------------------------
 IDLE="$TMP_ROOT/idle"; new_home "$IDLE"
 out=$(pe "$IDLE" list)
@@ -193,7 +210,7 @@ pass "reconcile reaps a runner whose source registration is gone"
 # --- a stale claim is reclaimable, a live one is not ------------------------
 CLAIM="$FM_PROCEVENT_CLAIM_ROOT/stale-src.claim"
 mkdir -p "$FM_PROCEVENT_CLAIM_ROOT"
-printf '%s\n%s\n' "$TMP_ROOT/gone-home" "999999" > "$CLAIM"
+printf '%s\n%s\nstale-token\nstale-identity\n' "$TMP_ROOT/gone-home" "999999" > "$CLAIM"
 chmod 0600 "$CLAIM"
 HC="$TMP_ROOT/hc"; new_home "$HC"
 pe_register "$HC" lavish stale-src -- /bin/echo recovered >/dev/null
@@ -229,6 +246,58 @@ sleep 0.5
 for race_pid in "${race_pids[@]}"; do wait "$race_pid" 2>/dev/null || true; done
 pass "concurrent stale-claim replacement starts exactly one runner"
 
+HJ="$TMP_ROOT/hj"; new_home "$HJ"
+TORN_TRIGGER="$TMP_ROOT/torn-trigger"
+pe_register "$HJ" lavish torn-src -- "$BLOCKER" "$TORN_TRIGGER" "torn" >/dev/null
+pe "$HJ" reconcile >/dev/null
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim" || fail "torn-read fixture runner did not claim its source"
+awk 'NR == 3 { print "replacement-token"; next } { print }' \
+  "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim" > "$TMP_ROOT/torn-next.claim"
+chmod 0600 "$TMP_ROOT/torn-next.claim"
+TORN_READY="$TMP_ROOT/torn-lock-ready"
+TORN_RELEASE="$TMP_ROOT/torn-lock-release"
+hold_source_lock torn-src "$TORN_READY" "$TORN_RELEASE"
+torn_holder_pid=$HOLDER_PID
+wait_for "$TORN_READY" || fail "could not hold the torn-read source boundary"
+pe "$HJ" list > "$TMP_ROOT/torn-list.out" &
+torn_list_pid=$!
+sleep 0.2
+kill -0 "$torn_list_pid" 2>/dev/null || fail "claim reader escaped the source boundary during replacement"
+mv "$TMP_ROOT/torn-next.claim" "$FM_PROCEVENT_CLAIM_ROOT/torn-src.claim"
+: > "$TORN_RELEASE"
+wait "$torn_list_pid" || fail "claim reader failed after serialized replacement"
+wait "$torn_holder_pid" || fail "torn-read source boundary holder failed"
+assert_contains "$(cat "$TMP_ROOT/torn-list.out")" "live" "claim reader observes one coherent replacement generation"
+pe "$HJ" retire torn-src >/dev/null
+pass "claim replacement cannot produce a torn ownership snapshot"
+
+HK="$TMP_ROOT/hk"; new_home "$HK"
+START_LOG="$TMP_ROOT/retire-start-executions"
+START_BLOCKER="$TMP_ROOT/retire-start-blocker.sh"
+cat > "$START_BLOCKER" <<'SH'
+#!/usr/bin/env bash
+printf 'started\n' >> "$1"
+sleep 30
+SH
+chmod +x "$START_BLOCKER"
+pe_register "$HK" lavish retire-start-src -- "$START_BLOCKER" "$START_LOG" >/dev/null
+START_READY="$TMP_ROOT/retire-start-lock-ready"
+START_RELEASE="$TMP_ROOT/retire-start-lock-release"
+hold_source_lock retire-start-src "$START_READY" "$START_RELEASE"
+retire_start_holder_pid=$HOLDER_PID
+wait_for "$START_READY" || fail "could not hold the retire-start source boundary"
+pe "$HK" start retire-start-src > "$TMP_ROOT/retire-start.out" 2>&1 &
+retire_start_pid=$!
+sleep 0.2
+kill -0 "$retire_start_pid" 2>/dev/null || fail "start did not wait for the source lifecycle boundary"
+rm -f "$HK/state/procevent/retire-start-src.source"
+: > "$START_RELEASE"
+wait "$retire_start_pid" 2>/dev/null || true
+wait "$retire_start_holder_pid" || fail "retire-start source boundary holder failed"
+assert_absent "$START_LOG" "a start queued before retirement must revalidate the registration"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/retire-start-src.claim" "retirement cannot leave a late claim"
+pass "retirement and start share one serialized lifecycle boundary"
+
 HI="$TMP_ROOT/hi"; new_home "$HI"
 pe_register "$HI" lavish reused-src -- /bin/true >/dev/null
 sleep 60 &
@@ -242,6 +311,29 @@ kill "$innocent_pid" 2>/dev/null || true
 wait "$innocent_pid" 2>/dev/null || true
 assert_absent "$FM_PROCEVENT_CLAIM_ROOT/reused-src.claim" "retirement releases the exact reused-pid claim"
 pass "PID reuse cannot signal an unrelated process"
+
+HL="$TMP_ROOT/hl"; new_home "$HL"
+IDENTITY_TRIGGER="$TMP_ROOT/identity-trigger"
+pe_register "$HL" lavish identity-src -- "$BLOCKER" "$IDENTITY_TRIGGER" "identity" >/dev/null
+pe "$HL" reconcile >/dev/null
+wait_for "$FM_PROCEVENT_CLAIM_ROOT/identity-src.claim" || fail "identity fixture runner did not claim its source"
+identity_pid=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/identity-src.claim")
+IDENTITY_FAKEBIN=$(fm_fakebin "$TMP_ROOT/identity-tools")
+cat > "$IDENTITY_FAKEBIN/ps" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+chmod +x "$IDENTITY_FAKEBIN/ps"
+identity_status=0
+identity_out=$(PATH="$IDENTITY_FAKEBIN:$PATH" FM_PROC_ROOT_OVERRIDE="$TMP_ROOT/no-proc" \
+  pe "$HL" retire identity-src 2>&1) || identity_status=$?
+[ "$identity_status" -ne 0 ] || fail "retirement succeeded despite uncertain live identity"
+assert_contains "$identity_out" "source remains registered" "uncertain retirement reports preserved state"
+kill -0 "$identity_pid" 2>/dev/null || fail "uncertain retirement signaled the runner"
+assert_present "$HL/state/procevent/identity-src.source" "uncertain retirement preserves registration"
+assert_present "$FM_PROCEVENT_CLAIM_ROOT/identity-src.claim" "uncertain retirement preserves claim generation"
+pe "$HL" retire identity-src >/dev/null
+pass "transient identity failure preserves the live source for retry"
 
 # --- argv boundaries, stderr, exit status, bounds, malformed output ---------
 HD="$TMP_ROOT/hd"; new_home "$HD"

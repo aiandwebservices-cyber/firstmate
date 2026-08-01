@@ -100,7 +100,13 @@ cmd_register() {
     printf '%s\n' "$@"
   } > "$tmp" || { rm -f -- "$tmp"; die "cannot write the registration"; }
   chmod 0600 "$tmp" || { rm -f -- "$tmp"; die "cannot secure the registration"; }
-  mv -f -- "$tmp" "$dest" || { rm -f -- "$tmp"; die "cannot publish the registration"; }
+  fm_procevent_source_lock_acquire "$id" || { rm -f -- "$tmp"; die "cannot lock the source"; }
+  if ! mv -f -- "$tmp" "$dest"; then
+    fm_procevent_source_lock_release "$id"
+    rm -f -- "$tmp"
+    die "cannot publish the registration"
+  fi
+  fm_procevent_source_lock_release "$id"
   printf 'registered: %s (%s)\n' "$id" "$adapter"
 }
 
@@ -126,13 +132,26 @@ publish_pending() {
 cmd_start() {
   local id=${1-} adapter out rc claimed
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
-  [ -f "$(source_file "$id")" ] || die "source is not registered: $id"
-  adapter=$(read_adapter "$id") || die "registration is unreadable: $id"
-  fm_procevent_adapter_valid "$adapter" || die "registration names an invalid adapter"
-  read_argv "$id" || die "registration argv is unreadable: $id"
-
-  fm_procevent_claim_acquire "$id" "$FM_HOME" "$$"
+  fm_procevent_source_lock_acquire "$id" || die "cannot lock source: $id"
+  if [ ! -f "$(source_file "$id")" ] || [ -L "$(source_file "$id")" ]; then
+    fm_procevent_source_lock_release "$id"
+    die "source is not registered: $id"
+  fi
+  if ! adapter=$(read_adapter "$id"); then
+    fm_procevent_source_lock_release "$id"
+    die "registration is unreadable: $id"
+  fi
+  if ! fm_procevent_adapter_valid "$adapter"; then
+    fm_procevent_source_lock_release "$id"
+    die "registration names an invalid adapter"
+  fi
+  if ! read_argv "$id"; then
+    fm_procevent_source_lock_release "$id"
+    die "registration argv is unreadable: $id"
+  fi
+  fm_procevent_claim_acquire_locked "$id" "$FM_HOME" "$$" "$(source_file "$id")"
   claimed=$?
+  fm_procevent_source_lock_release "$id"
   case "$claimed" in
     0) ;;
     2) printf 'already owned: %s\n' "$id"; exit 0 ;;
@@ -143,7 +162,9 @@ cmd_start() {
   CLAIM_PID=$$
   CLAIM_TOKEN=$FM_PROCEVENT_CLAIM_TOKEN
   release_start_claim() {
-    fm_procevent_claim_release "$CLAIM_ID" "$CLAIM_HOME" "$CLAIM_PID" "$CLAIM_TOKEN" 2>/dev/null || true
+    fm_procevent_source_lock_acquire "$CLAIM_ID" 2>/dev/null || return 0
+    fm_procevent_claim_release_locked "$CLAIM_ID" "$CLAIM_HOME" "$CLAIM_PID" "$CLAIM_TOKEN" 2>/dev/null || true
+    fm_procevent_source_lock_release "$CLAIM_ID" 2>/dev/null || true
   }
   trap release_start_claim EXIT
   printf '%s\n' "$$" > "$(runner_file "$id")" 2>/dev/null || true
@@ -196,7 +217,7 @@ detach_runner() {  # <source-id>
 }
 
 cmd_reconcile() {
-  local rec id published started=0 stopped=0 claim owner pid token identity
+  local rec id published started=0 stopped=0 uncertain=0 claim owner pid token identity claim_state stop_state
   published=$(publish_pending)
 
   # Stop a runner this home owns whose source is no longer registered. Without
@@ -206,17 +227,38 @@ cmd_reconcile() {
     [ -e "$claim" ] || continue
     id=${claim##*/}; id=${id%.claim}
     fm_procevent_source_id_valid "$id" || continue
-    [ -f "$(source_file "$id")" ] && continue
-    fm_procevent_claim_load "$id" 2>/dev/null || continue
+    fm_procevent_source_lock_acquire "$id" || continue
+    if [ -f "$(source_file "$id")" ] && [ ! -L "$(source_file "$id")" ]; then
+      fm_procevent_source_lock_release "$id"
+      continue
+    fi
+    if ! fm_procevent_claim_load_locked "$id" 2>/dev/null; then
+      uncertain=$((uncertain + 1))
+      fm_procevent_source_lock_release "$id"
+      continue
+    fi
     owner=$FM_PROCEVENT_CLAIM_HOME
     pid=$FM_PROCEVENT_CLAIM_PID
     token=$FM_PROCEVENT_CLAIM_TOKEN
     identity=$FM_PROCEVENT_CLAIM_IDENTITY
-    [ "$owner" = "$FM_HOME" ] || continue
+    if [ "$owner" != "$FM_HOME" ]; then
+      fm_procevent_source_lock_release "$id"
+      continue
+    fi
     stop_runner_pid "$pid" "$identity"
-    fm_procevent_claim_release "$id" "$owner" "$pid" "$token" 2>/dev/null || true
-    rm -f -- "$(runner_file "$id")"
-    stopped=$((stopped + 1))
+    stop_state=$?
+    case "$stop_state" in
+      0|1)
+        if fm_procevent_claim_release_locked "$id" "$owner" "$pid" "$token" 2>/dev/null; then
+          rm -f -- "$(runner_file "$id")"
+          stopped=$((stopped + 1))
+        else
+          uncertain=$((uncertain + 1))
+        fi
+        ;;
+      *) uncertain=$((uncertain + 1)) ;;
+    esac
+    fm_procevent_source_lock_release "$id"
   done
 
   if [ -d "$REG" ]; then
@@ -224,14 +266,23 @@ cmd_reconcile() {
       [ -e "$rec" ] || continue
       id=${rec##*/}; id=${id%.source}
       fm_procevent_source_id_valid "$id" || continue
-      fm_procevent_claim_live "$id" && continue
-      # No live owner: start one, detached from this cycle so reconcile never
-      # blocks the watcher.
-      detach_runner "$id"
-      started=$((started + 1))
+      fm_procevent_source_lock_acquire "$id" || continue
+      if [ -f "$(source_file "$id")" ] && [ ! -L "$(source_file "$id")" ]; then
+        fm_procevent_claim_state_locked "$id"
+        claim_state=$?
+        if [ "$claim_state" -eq 1 ]; then
+          fm_procevent_source_lock_release "$id"
+          detach_runner "$id"
+          started=$((started + 1))
+          continue
+        elif [ "$claim_state" -eq 2 ]; then
+          uncertain=$((uncertain + 1))
+        fi
+      fi
+      fm_procevent_source_lock_release "$id"
     done
   fi
-  printf 'reconciled: published=%s started=%s stopped=%s\n' "$published" "$started" "$stopped"
+  printf 'reconciled: published=%s started=%s stopped=%s uncertain=%s\n' "$published" "$started" "$stopped" "$uncertain"
 }
 
 # Stop a runner and the child it is blocked on. A runner started by reconcile is
@@ -239,34 +290,67 @@ cmd_reconcile() {
 # blocking child - signalling only the runner would leave that child alive and
 # reparented, which is exactly how a source that never completes leaks.
 stop_runner_pid() {  # <pid> <identity>
-  local pid=${1-} identity=${2-}
-  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
-  [ -n "$identity" ] || return 0
-  fm_procevent_pid_matches "$pid" "$identity" || return 0
+  local pid=${1-} identity=${2-} state i=0
+  case "$pid" in ''|*[!0-9]*) return 2 ;; esac
+  [ -n "$identity" ] || return 2
+  fm_procevent_pid_state "$pid" "$identity"
+  state=$?
+  [ "$state" -eq 0 ] || return "$state"
   kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-  local i=0
   while [ "$i" -lt 20 ]; do
-    fm_procevent_pid_matches "$pid" "$identity" || return 0
+    fm_procevent_pid_state "$pid" "$identity"
+    state=$?
+    [ "$state" -eq 1 ] && return 0
+    [ "$state" -eq 2 ] && return 2
     sleep 0.1
     i=$((i + 1))
   done
-  fm_procevent_pid_matches "$pid" "$identity" || return 0
+  fm_procevent_pid_state "$pid" "$identity"
+  state=$?
+  [ "$state" -eq 1 ] && return 0
+  [ "$state" -eq 2 ] && return 2
   kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  i=0
+  while [ "$i" -lt 20 ]; do
+    fm_procevent_pid_state "$pid" "$identity"
+    state=$?
+    [ "$state" -eq 1 ] && return 0
+    [ "$state" -eq 2 ] && return 2
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 2
 }
 
 cmd_retire() {
-  local id=${1-} owner= pid= token= identity=
+  local id=${1-} owner= pid= token= identity= stop_state
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
-  if fm_procevent_claim_load "$id" 2>/dev/null && [ "$FM_PROCEVENT_CLAIM_HOME" = "$FM_HOME" ]; then
-    owner=$FM_PROCEVENT_CLAIM_HOME
-    pid=$FM_PROCEVENT_CLAIM_PID
-    token=$FM_PROCEVENT_CLAIM_TOKEN
-    identity=$FM_PROCEVENT_CLAIM_IDENTITY
+  fm_procevent_source_lock_acquire "$id" || die "cannot lock source: $id"
+  if [ -e "$(fm_procevent_claim_path "$id")" ]; then
+    if ! fm_procevent_claim_load_locked "$id" 2>/dev/null; then
+      fm_procevent_source_lock_release "$id"
+      die "cannot safely read source ownership: $id"
+    fi
+    if [ "$FM_PROCEVENT_CLAIM_HOME" = "$FM_HOME" ]; then
+      owner=$FM_PROCEVENT_CLAIM_HOME
+      pid=$FM_PROCEVENT_CLAIM_PID
+      token=$FM_PROCEVENT_CLAIM_TOKEN
+      identity=$FM_PROCEVENT_CLAIM_IDENTITY
+      stop_runner_pid "$pid" "$identity"
+      stop_state=$?
+      if [ "$stop_state" -eq 2 ]; then
+        fm_procevent_source_lock_release "$id"
+        die "cannot confirm runner identity; source remains registered: $id"
+      fi
+      if ! fm_procevent_claim_release_locked "$id" "$owner" "$pid" "$token"; then
+        fm_procevent_source_lock_release "$id"
+        die "cannot release source ownership: $id"
+      fi
+    fi
   fi
   rm -f -- "$(source_file "$id")"
   rm -f -- "$(runner_file "$id")"
-  [ -z "$pid" ] || stop_runner_pid "$pid" "$identity"
-  [ -z "$token" ] || fm_procevent_claim_release "$id" "$owner" "$pid" "$token" 2>/dev/null || true
+  fm_procevent_source_lock_release "$id"
   printf 'retired: %s\n' "$id"
 }
 
@@ -281,7 +365,10 @@ cmd_list() {
     [ -e "$rec" ] || continue
     id=${rec##*/}; id=${id%.source}
     adapter=$(read_adapter "$id" 2>/dev/null || echo '?')
-    if fm_procevent_claim_live "$id"; then owner=live; else owner=none; fi
+    fm_procevent_source_lock_acquire "$id" || continue
+    fm_procevent_claim_state_locked "$id"
+    case "$?" in 0) owner=live ;; 1) owner=none ;; *) owner=uncertain ;; esac
+    fm_procevent_source_lock_release "$id"
     pending=$(fm_procevent_pending "$STATE" | grep -c "/$id\." || true)
     printf '%-28s %-12s %-10s %s\n' "$id" "$adapter" "$owner" "$pending"
   done

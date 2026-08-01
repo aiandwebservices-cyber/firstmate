@@ -63,6 +63,9 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 | canonical physical identity | a final-component symlink and its target produce the same Lavish source id |
 | stale reclaim without displacement | concurrent contenders replacing one stale claim start exactly one runner |
 | PID-reuse safety | retirement refuses to signal a live PID whose identity differs from the claim |
+| coherent ownership reads | a claim replacement held inside the source boundary blocks `list` until one complete generation is visible |
+| retire-start exclusion | a queued start revalidates registration after the serialized retirement boundary and executes no child |
+| uncertain identity | a live owner whose identity probe transiently fails is not signaled or released, and its registration remains for retry |
 | source-only supervision | a registered source with no task metadata trips the shared predicate and general guard |
 | argv integrity | an argument containing spaces survives as one argument, and a shell-looking argument is passed literally with no interpretation |
 | bounded output | output beyond `FM_PROCEVENT_MAX_OUTPUT_BYTES` is truncated and still captured, never published whole or dropped |

@@ -418,8 +418,10 @@ A home with no registered source runs nothing, generates no state, and keeps its
 Ownership is machine-wide per canonical source, because separate homes can share one underlying source store.
 Claims live under `$XDG_STATE_HOME/firstmate/procevent-claims` (override with `FM_PROCEVENT_CLAIM_ROOT`).
 Each claim binds its home and runner PID to a process identity and unique generation.
-Replacement is serialized, a live identity-matched owner is never displaced, and release removes only the exact generation the caller acquired.
+Registration, acquisition, replacement, retirement, and generation-bound release are serialized at one machine-wide boundary per source.
+A live identity-matched owner is never displaced, and release removes only the exact generation the caller acquired.
 Retirement and orphan reconciliation signal a runner process group only while its recorded process identity still matches.
+If identity cannot be established for a live PID, the operation preserves the registration and claim for safe retry.
 
 `FM_PROCEVENT_MAX_OUTPUT_BYTES` (default 1048576) bounds a single captured result; oversized output is truncated with a stderr notice rather than published whole or dropped.
 
