@@ -614,6 +614,7 @@ fi
 STALE_WORKTREE_LOCK_RETRY_WAIT_SECS=$TREEHOUSE_RETURN_LOCK_RETRY_WAIT_SECS
 TEARDOWN_TREEHOUSE_LOCK_REFUSED=2
 TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED=3
+TEARDOWN_PROCEVENT_RESTORE_FAILED=4
 
 # True when treehouse/git stderr shows the transient index.lock "File exists" race.
 # Other return failures must not enter the retry path.
@@ -1013,18 +1014,18 @@ remove_firstmate_home() {
   [ -n "$abs_home_path" ] || return 0
   process_event_backup=$(snapshot_firstmate_home_process_events "$abs_home_path" "$label") || return 1
   if ! cleanup_firstmate_home_process_events "$abs_home_path" "$label"; then
-    restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || true
+    restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
     return 1
   fi
   if firstmate_home_has_treehouse_slot "$abs_home_path"; then
     command -v treehouse >/dev/null 2>&1 || {
-      restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || true
       echo "error: treehouse command not found; cannot return $label $abs_home_path" >&2
+      restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
       return 1
     }
     teardown_treehouse_return "$abs_home_path" "$FM_ROOT" "$label" || {
-      restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || true
       echo "error: treehouse return failed for $label $abs_home_path; lease may still be held" >&2
+      restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
       return 1
     }
     [ -z "$process_event_backup" ] || rm -rf -- "$process_event_backup"
@@ -1034,7 +1035,7 @@ remove_firstmate_home() {
     [ -z "$process_event_backup" ] || rm -rf -- "$process_event_backup"
     return 0
   fi
-  restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || true
+  restore_firstmate_home_process_events "$abs_home_path" "$label" "$process_event_backup" || return $?
   return 1
 }
 
@@ -1078,17 +1079,33 @@ snapshot_firstmate_home_process_events() {
 restore_firstmate_home_process_events() {
   local home=$1 label=$2 backup=$3 reg source tmp runner
   [ -n "$backup" ] || return 0
-  [ -d "$backup" ] && [ ! -L "$backup" ] || return 1
+  [ -d "$backup" ] && [ ! -L "$backup" ] || {
+    echo "error: process-event restoration failed for $label $home; recovery backup is unavailable at $backup" >&2
+    return "$TEARDOWN_PROCEVENT_RESTORE_FAILED"
+  }
   reg="$home/state/procevent"
-  (umask 077; mkdir -p "$reg") || return 1
-  [ -d "$reg" ] && [ ! -L "$reg" ] || return 1
+  (umask 077; mkdir -p "$reg") || {
+    echo "error: process-event restoration failed for $label $home; recover registrations from $backup" >&2
+    return "$TEARDOWN_PROCEVENT_RESTORE_FAILED"
+  }
+  [ -d "$reg" ] && [ ! -L "$reg" ] || {
+    echo "error: process-event restoration failed for $label $home; recover registrations from $backup" >&2
+    return "$TEARDOWN_PROCEVENT_RESTORE_FAILED"
+  }
   for source in "$backup"/*.source; do
     [ -e "$source" ] || continue
-    [ -f "$source" ] && [ ! -L "$source" ] || return 1
-    tmp=$(umask 077; mktemp "$reg/.restore.XXXXXX") || return 1
+    [ -f "$source" ] && [ ! -L "$source" ] || {
+      echo "error: process-event restoration failed for $label $home; recover registrations from $backup" >&2
+      return "$TEARDOWN_PROCEVENT_RESTORE_FAILED"
+    }
+    tmp=$(umask 077; mktemp "$reg/.restore.XXXXXX") || {
+      echo "error: process-event restoration failed for $label $home; recover registrations from $backup" >&2
+      return "$TEARDOWN_PROCEVENT_RESTORE_FAILED"
+    }
     if ! cp -- "$source" "$tmp" || ! chmod 0600 "$tmp" || ! mv -f -- "$tmp" "$reg/${source##*/}"; then
       rm -f -- "$tmp"
-      return 1
+      echo "error: process-event restoration failed for $label $home; recover registrations from $backup" >&2
+      return "$TEARDOWN_PROCEVENT_RESTORE_FAILED"
     fi
   done
   runner="$home/bin/fm-procevent.sh"
@@ -1096,8 +1113,8 @@ restore_firstmate_home_process_events() {
     runner="$SCRIPT_DIR/fm-procevent.sh"
   fi
   if ! FM_HOME="$home" FM_ROOT_OVERRIDE="$FM_ROOT" "$runner" reconcile >/dev/null; then
-    echo "error: could not rearm process-event registrations for $label $home; recover them from $backup" >&2
-    return 1
+    echo "error: process-event restoration could not rearm $label $home; active waits may remain retired; recover registrations from $backup" >&2
+    return "$TEARDOWN_PROCEVENT_RESTORE_FAILED"
   fi
   rm -rf -- "$backup"
 }
@@ -1366,7 +1383,7 @@ cleanup_firstmate_home_children() {
       [ -n "$child_home" ] || child_home=$child_wt
       if [ -n "$child_home" ] && [ -d "$child_home" ]; then
         cleanup_firstmate_home_children "$child_home" || return 1
-        remove_firstmate_home "$child_home" "child firstmate home" "$child_id" || return 1
+        remove_firstmate_home "$child_home" "child firstmate home" "$child_id" || return $?
       fi
     elif [ "$child_backend" = orca ]; then
       if [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
@@ -1638,7 +1655,7 @@ if [ "$BACKEND" = herdr ]; then
 fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
-  remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID" || exit 1
+  remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID" || exit $?
   remove_secondmate_registry_entry "$ID"
 fi
 remove_grok_turnend_auth "$STATE" "$ID"

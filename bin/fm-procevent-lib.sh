@@ -88,7 +88,7 @@ fm_procevent_source_lock_release() {
 }
 
 fm_procevent_claim_load_locked() {  # <source-id>
-  local claim home pid token identity extra
+  local claim home pid token identity reg_dir extra
   claim=$(fm_procevent_claim_path "$1")
   [ -f "$claim" ] && [ ! -L "$claim" ] || return 1
   {
@@ -96,16 +96,19 @@ fm_procevent_claim_load_locked() {  # <source-id>
       && IFS= read -r pid \
       && IFS= read -r token \
       && IFS= read -r identity \
+      && { IFS= read -r reg_dir || reg_dir=; } \
       && ! IFS= read -r extra
   } < "$claim" || return 1
   [ -n "$home" ] || return 1
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   case "$token" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   [ -n "$identity" ] || return 1
+  case "$reg_dir" in ''|/*) ;; *) return 1 ;; esac
   FM_PROCEVENT_CLAIM_HOME=$home
   FM_PROCEVENT_CLAIM_PID=$pid
   FM_PROCEVENT_CLAIM_TOKEN=$token
   FM_PROCEVENT_CLAIM_IDENTITY=$identity
+  FM_PROCEVENT_CLAIM_REG_DIR=$reg_dir
 }
 
 fm_procevent_pid_state() {  # <pid> <identity>: 0 live match, 1 stale, 2 uncertain
@@ -130,9 +133,11 @@ fm_procevent_claim_state_locked() {  # <source-id>: 0 live, 1 stale/absent, 2 un
 # fm_procevent_claim_acquire_locked <source-id> <home> <pid> <registration>
 # 0 acquired, 1 error, 2 held by a live owner (possibly another home).
 fm_procevent_claim_acquire_locked() {
-  local id=$1 home=$2 pid=$3 registration=$4 root claim tmp identity token status claim_state old_home old_token stage
+  local id=$1 home=$2 pid=$3 registration=$4 root claim tmp identity token status claim_state old_home old_token old_reg_dir reg_dir stage
   fm_procevent_source_id_valid "$id" || return 1
   [ -f "$registration" ] && [ ! -L "$registration" ] || return 1
+  reg_dir=${registration%/*}
+  case "$reg_dir" in /*) ;; *) return 1 ;; esac
   identity=$(fm_pid_identity "$pid" 2>/dev/null) || return 1
   root=$(fm_procevent_claim_root)
   claim=$(fm_procevent_claim_path "$id")
@@ -146,8 +151,18 @@ fm_procevent_claim_acquire_locked() {
         if [ -f "$claim" ] && [ ! -L "$claim" ]; then
           old_home=$FM_PROCEVENT_CLAIM_HOME
           old_token=$FM_PROCEVENT_CLAIM_TOKEN
-          if [ "$old_home" = "$home" ]; then
-            stage="${registration%/*}/.$id.$old_token.output"
+          old_reg_dir=$FM_PROCEVENT_CLAIM_REG_DIR
+          if [ -z "$old_reg_dir" ]; then
+            if [ "$old_home" = "$home" ]; then
+              old_reg_dir=$reg_dir
+            else
+              old_reg_dir="$old_home/state/procevent"
+            fi
+          fi
+          if [ -L "$old_reg_dir" ] || { [ -e "$old_reg_dir" ] && [ ! -d "$old_reg_dir" ]; }; then
+            status=1
+          else
+            stage="$old_reg_dir/.$id.$old_token.output"
             if { [ -e "$stage" ] || [ -L "$stage" ]; } && ! rm -f -- "$stage"; then
               status=1
             fi
@@ -168,7 +183,7 @@ fm_procevent_claim_acquire_locked() {
   fi
   if [ "$status" -eq 0 ]; then
     token=${tmp##*/}-$pid
-    printf '%s\n%s\n%s\n%s\n' "$home" "$pid" "$token" "$identity" > "$tmp" || status=1
+    printf '%s\n%s\n%s\n%s\n%s\n' "$home" "$pid" "$token" "$identity" "$reg_dir" > "$tmp" || status=1
     [ "$status" -ne 0 ] || chmod 0600 "$tmp" || status=1
     [ "$status" -ne 0 ] || mv -f -- "$tmp" "$claim" || status=1
     if [ "$status" -eq 0 ]; then

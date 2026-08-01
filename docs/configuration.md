@@ -425,6 +425,7 @@ If identity cannot be established for a live PID, the operation preserves the re
 
 Supported secondmate retirement preflights each target home's bounded `sweep-home` command before destructive teardown, snapshots its registrations outside the target, then runs the sweep at that home's final deletion or return boundary.
 If deletion or return fails, teardown restores those registrations and reconciles them before returning the refusal.
+If restoration or rearming also fails, teardown returns a distinct status and reports the retained registration backup path for manual recovery instead of hiding the retired waits.
 The sweep retires local registrations and machine-wide claims physically owned by that home through the same identity-checked, generation-bound retirement path, and leaves foreign-home claims untouched.
 Teardown refuses with the home, lease, routing evidence, registrations, claims, and runners retained when identity is uncertain, ownership is unreadable or unreleased, or relevant state exists without a sweep-capable child script.
 Raw manual deletion of a Firstmate home is unsupported because it can orphan a blocking child.

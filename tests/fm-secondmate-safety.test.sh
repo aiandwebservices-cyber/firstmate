@@ -38,6 +38,7 @@ case "${1:-}" in
     ;;
   reconcile)
     printf '%s\n' "$FM_HOME" >> "$FM_FAKE_PROCEVENT_REARM_LOG"
+    [ -z "${FM_FAKE_PROCEVENT_REARM_FAIL:-}" ] || exit 1
     ;;
   *) exit 2 ;;
 esac
@@ -1473,7 +1474,7 @@ test_secondmate_force_teardown_sweeps_nested_homes() {
 }
 
 test_secondmate_teardown_refuses_failed_leased_home_return() {
-  local home subhome subhome_abs fakebin log fmroot err rc sweep_log rearm_log
+  local home subhome subhome_abs fakebin log fmroot err rc sweep_log rearm_log backup
   home="$TMP_ROOT/teardown-return-fail-home"
   subhome="$TMP_ROOT/teardown-return-fail-subhome"
   fmroot="$TMP_ROOT/teardown-return-fail-fmroot"
@@ -1519,6 +1520,19 @@ EOF
   grep -Fx "$subhome_abs" "$rearm_log" >/dev/null || fail "failed leased-home return did not rearm restored process-event sources"
   [ -e "$home/state/domain.meta" ] || fail "teardown cleared meta after leased home return failed"
   grep -F -- '- domain ' "$home/data/secondmates.md" >/dev/null || fail "teardown removed registry route after leased home return failed"
+
+  set +e
+  PATH="$fakebin:$PATH" FM_ROOT_OVERRIDE="$fmroot" FM_HOME="$home" FM_FAKE_TMUX_LOG="$log" FM_FAKE_TMUX_CAPTURE="$TMP_ROOT/teardown-return-fail-fake/pane.txt" \
+    FM_FAKE_PROCEVENT_SWEEP_LOG="$sweep_log" FM_FAKE_PROCEVENT_REARM_LOG="$rearm_log" \
+    FM_FAKE_TREEHOUSE_RETURN_FAIL=1 FM_FAKE_PROCEVENT_REARM_FAIL=1 \
+    "$ROOT/bin/fm-teardown.sh" domain >/dev/null 2>"$err"
+  rc=$?
+  set -e
+
+  [ "$rc" -eq 4 ] || fail "failed process-event restoration did not return its distinct recoverable status"
+  grep -F 'active waits may remain retired; recover registrations from ' "$err" >/dev/null || fail "failed process-event restoration did not report its recovery backup"
+  backup=$(find "$TMP_ROOT" -maxdepth 1 -type d -name '.fm-procevent-restore.*' -print -quit)
+  [ -n "$backup" ] && [ -e "$backup/source.source" ] || fail "failed process-event restoration did not retain its registration backup"
   pass "secondmate teardown refuses to hide failed leased-home return"
 }
 

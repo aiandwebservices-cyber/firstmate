@@ -257,6 +257,21 @@ assert_absent "$CLAIM" "the replacement claim generation is released after compl
 assert_absent "$HC/state/procevent/.stale-src.stale-token.output" "stale claim recovery removes its abandoned staging generation"
 pass "stale-owner recovery removes abandoned output without displacing a live owner"
 
+HC_OLD="$TMP_ROOT/hc-old"; new_home "$HC_OLD"
+HC_NEW="$TMP_ROOT/hc-new"; new_home "$HC_NEW"
+HC_OLD_STATE="$TMP_ROOT/hc-old-state"
+mkdir -p "$HC_OLD_STATE/procevent"
+printf '%s\n%s\ncross-home-token\ncross-home-identity\n%s\n' \
+  "$HC_OLD" "999999" "$HC_OLD_STATE/procevent" > "$FM_PROCEVENT_CLAIM_ROOT/cross-home-src.claim"
+chmod 0600 "$FM_PROCEVENT_CLAIM_ROOT/cross-home-src.claim"
+printf 'partial cross-home output\n' > "$HC_OLD_STATE/procevent/.cross-home-src.cross-home-token.output"
+chmod 0600 "$HC_OLD_STATE/procevent/.cross-home-src.cross-home-token.output"
+pe_register "$HC_NEW" lavish cross-home-src -- /bin/echo recovered >/dev/null
+out=$(pe "$HC_NEW" start cross-home-src)
+assert_contains "$out" "captured:" "a second home can replace a stale source owner"
+assert_absent "$HC_OLD_STATE/procevent/.cross-home-src.cross-home-token.output" "cross-home reclaim removes the old generation's recorded staging file"
+pass "cross-home stale recovery removes abandoned output from the old state directory"
+
 HR="$TMP_ROOT/hr"; new_home "$HR"
 RACE_TRIGGER="$TMP_ROOT/race-trigger"
 RACE_LOG="$TMP_ROOT/race-executions"
