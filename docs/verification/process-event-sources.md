@@ -57,8 +57,9 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 
 | Guarantee | How it is proven |
 | --- | --- |
-| capture before publication | the captured result exists at `0600` and its event references it only afterward |
+| capture before publication | the captured result exists at `0600` and its event names its committed sequence only afterward |
 | restart recovery | a durable result with no announcement marker is re-announced by `reconcile`, once, with no second durable copy and no duplicated wake |
+| result identity and ordering | each wake names the committed sequence to read, and pending sequences 1, 2, and 10 publish in numeric order |
 | one owner per canonical source | a second home's `start` for the same source id reports `already owned` and publishes nothing |
 | canonical physical identity | a final-component symlink and its target produce the same Lavish source id |
 | stale reclaim without displacement | concurrent contenders replacing one stale claim start exactly one runner |
@@ -66,14 +67,15 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 | coherent ownership reads | a claim replacement held inside the source boundary blocks `list` until one complete generation is visible |
 | retire-start exclusion | a queued start revalidates registration after the serialized retirement boundary and executes no child |
 | uncertain identity | a live owner whose identity probe transiently fails is not signaled or released, and its registration remains for retry |
-| bounded home sweep | registrations and claim-only owned sources retire through the ordinary safe path before home deletion |
+| bounded home sweep | a non-mutating full-tree preflight precedes teardown, then registrations and claim-only owned sources retire through the ordinary safe path at each home-removal boundary |
 | sweep refusal | uncertain identity preserves the runner, claim, registration, home, lease, and parent retirement evidence for retry |
 | foreign ownership | sweeping one home removes its registration without signaling or releasing another home's live claim |
-| nested and force cleanup | normal, force, and nested secondmate removal invoke each target home's sweep before deletion |
+| nested and force cleanup | normal, force, and nested secondmate removal invoke each target home's sweep at its final removal boundary |
+| teardown refusal ordering | a later public-followup refusal retains the home and its active process-event registration without invoking its sweep |
 | healthy-home invariance | homes with no registration or owned runner claim retain ordinary registration-only supervision and teardown behavior |
 | source-only supervision | a registered source with no task metadata trips the shared predicate and general guard |
-| argv integrity | an argument containing spaces survives as one argument, and a shell-looking argument is passed literally with no interpretation |
-| bounded output | output beyond `FM_PROCEVENT_MAX_OUTPUT_BYTES` is truncated and still captured, never published whole or dropped |
+| argv integrity | an argument containing spaces survives as one argument, a shell-looking argument is passed literally with no interpretation, and an unrepresentable newline is rejected at registration |
+| bounded output | output beyond `FM_PROCEVENT_MAX_OUTPUT_BYTES` is drained while only the bound is staged, then truncated and captured |
 | silent failure handling | a nonzero exit with no output publishes nothing and leaves the source registered for retry |
 | inertness | a home with no registered source generates no state, starts no process, and does not need supervision |
 
@@ -82,7 +84,7 @@ Exercised by `tests/fm-procevent.test.sh` against a fake blocking source whose c
 A runner started by `reconcile` is its own process group leader and is reparented to init, so it outlives the shell that started it by design.
 That means nothing about the starting context can reap it: removing a home's state directory does not stop an already-running child, and signalling only the runner leaves the blocking child alive.
 
-Two paths therefore stop a runner, and both signal the **process group** so the blocked child cannot survive its supervisor:
+Two paths therefore stop a runner, and both verify the runner-owned process group, escalate to `KILL` while that group still exists, and refuse to release ownership until the whole group is gone:
 
 - `retire` resolves the runner PID and identity from this home's machine-wide claim, so retirement still works when the home's state is already gone.
 - `reconcile` stops a runner this home owns whose source registration has been removed, and reports it as `stopped=N`.

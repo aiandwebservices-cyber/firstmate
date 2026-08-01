@@ -138,7 +138,7 @@ assert_contains "$out" "already owned" "a duplicate start loses instead of runni
 : > "$TRIG"
 wait_for "$H1/state/.wake-queue" || fail "no event was published after the source completed"
 payload=$(wake_payloads "$H1")
-assert_contains "$payload" "procevent lavish src-one" "completion publishes one normalized event"
+assert_contains "$payload" "procevent lavish src-one 1" "completion publishes the committed result sequence"
 assert_not_contains "$payload" "payload one" "source output never reaches the event line"
 [ "$(printf '%s\n' "$payload" | grep -c .)" = 1 ] || fail "expected exactly one event, got: $payload"
 pass "one blocking completion yields exactly one bounded normalized event"
@@ -168,7 +168,33 @@ out=$(pe "$H2" reconcile)
 assert_contains "$out" "published=0" "an already-announced result is not announced twice"
 [ "$(wc -l < "$H2/state/.wake-queue")" = "$before" ] || fail "recovery duplicated the handled effect"
 [ "$(count_results "$H2" src-cut)" = 1 ] || fail "recovery created a second durable copy"
-pass "restart recovery re-announces once without duplicating the handled effect"
+pass "restart recovery re-announces once without duplicating the wake"
+
+HP="$TMP_ROOT/hp"; new_home "$HP"
+mkdir -p "$HP/state/procevent-inbox"
+for seq in 10 2 1; do
+  printf '%s\n' "$seq" > "$HP/state/procevent-inbox/ordered-src.$seq.result"
+done
+pending=$(bash -c '. "$1/bin/fm-procevent-lib.sh"; fm_procevent_pending "$2"' _ "$ROOT" "$HP/state")
+expected=$(printf '%s\n' \
+  "$HP/state/procevent-inbox/ordered-src.1.result" \
+  "$HP/state/procevent-inbox/ordered-src.2.result" \
+  "$HP/state/procevent-inbox/ordered-src.10.result")
+[ "$pending" = "$expected" ] || fail "pending results were not emitted in numeric sequence order: $pending"
+mkdir -p "$HP/state/procevent"
+printf 'adapter=lavish\nargc=1\nargv:\n/bin/false\n' > "$HP/state/procevent/ordered-src.source"
+chmod 0600 "$HP/state/procevent/ordered-src.source"
+pe "$HP" reconcile >/dev/null
+deduped=$(FM_HOME="$HP" bash -c '
+  . "$1/bin/fm-wake-lib.sh"
+  fm_wake_print_deduped "$2/state/.wake-queue" | awk -F "\t" "{print \$5}"
+' _ "$ROOT" "$HP")
+expected=$(printf '%s\n' \
+  'check: procevent lavish ordered-src 1' \
+  'check: procevent lavish ordered-src 2' \
+  'check: procevent lavish ordered-src 10')
+[ "$deduped" = "$expected" ] || fail "distinct result generations were coalesced or reordered: $deduped"
+pass "pending results preserve numeric order and distinct wake identity"
 
 # --- two homes cannot both own one canonical source -------------------------
 HA="$TMP_ROOT/ha"; HB="$TMP_ROOT/hb"; new_home "$HA"; new_home "$HB"
@@ -350,6 +376,10 @@ wait_for "$FM_PROCEVENT_CLAIM_ROOT/sweep-two.claim" || fail "home sweep fixture 
 sweep_pid_one=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/sweep-one.claim")
 sweep_pid_two=$(sed -n '2p' "$FM_PROCEVENT_CLAIM_ROOT/sweep-two.claim")
 rm -f "$HM/state/procevent/sweep-two.source"
+out=$(pe "$HM" sweep-home --preflight)
+assert_contains "$out" "sweep preflight: ready" "home sweep preflight validates the full bounded snapshot"
+assert_present "$HM/state/procevent/sweep-one.source" "home sweep preflight does not remove registrations"
+assert_present "$FM_PROCEVENT_CLAIM_ROOT/sweep-one.claim" "home sweep preflight does not release claims"
 out=$(pe "$HM" sweep-home)
 assert_contains "$out" "swept: attempted=2" "home sweep retires registrations and owned claim-only sources"
 for sweep_pid in "$sweep_pid_one" "$sweep_pid_two"; do
@@ -359,7 +389,7 @@ done
 assert_absent "$HM/state/procevent/sweep-one.source" "home sweep removes registrations"
 assert_absent "$FM_PROCEVENT_CLAIM_ROOT/sweep-one.claim" "home sweep releases the first claim"
 assert_absent "$FM_PROCEVENT_CLAIM_ROOT/sweep-two.claim" "home sweep releases a claim with no registration"
-pass "bounded home sweep retires every locally owned source"
+pass "bounded home sweep preflights then retires every locally owned source"
 
 HN="$TMP_ROOT/hn"; HO="$TMP_ROOT/ho"; new_home "$HN"; new_home "$HO"
 FOREIGN_TRIGGER="$TMP_ROOT/foreign-trigger"
@@ -416,6 +446,13 @@ assert_grep 'second; rm -rf /tmp/nope' "$R" "a shell-looking argument is passed 
 assert_absent /tmp/nope "no shell interpretation occurred"
 assert_not_contains "$(wake_payloads "$HD")" "rm -rf" "argv content never reaches the event line"
 
+newline_status=0
+newline_out=$(pe_register "$HD" lavish newline-src -- /bin/echo $'first\nsecond' 2>&1) || newline_status=$?
+[ "$newline_status" -ne 0 ] || fail "registration accepted an argv element containing a newline"
+assert_contains "$newline_out" "cannot contain newlines" "newline rejection explains the unsupported representation"
+assert_absent "$HD/state/procevent/newline-src.source" "newline rejection publishes no corrupt registration"
+pass "registration rejects unrepresentable newline arguments"
+
 HE="$TMP_ROOT/he"; new_home "$HE"
 pe_register "$HE" lavish fail-src -- /bin/sh -c 'exit 7' >/dev/null
 out=$(pe "$HE" start fail-src)
@@ -432,6 +469,47 @@ RB=$(first_result "$HF" big-src || true)
 [ -n "$RB" ] || fail "bounded output was not captured at all"
 [ "$(wc -c < "$RB" | tr -d ' ')" -le 100 ] || fail "output bound was not enforced"
 pass "oversized output is bounded rather than published whole or dropped"
+
+HG="$TMP_ROOT/hg-live"; new_home "$HG"
+NOISY="$TMP_ROOT/noisy.sh"
+NOISY_PID="$TMP_ROOT/noisy.pid"
+cat > "$NOISY" <<'SH'
+#!/usr/bin/env bash
+trap '' TERM PIPE
+printf '%s\n' "$$" > "$1"
+while :; do
+  printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n'
+done
+SH
+chmod +x "$NOISY"
+pe_register "$HG" lavish noisy-src -- "$NOISY" "$NOISY_PID" >/dev/null
+FM_PROCEVENT_MAX_OUTPUT_BYTES=100 pe "$HG" reconcile >/dev/null
+wait_for "$NOISY_PID" || fail "noisy source child did not start"
+noisy_child=$(cat "$NOISY_PID")
+staged=
+for _ in $(seq 1 100); do
+  for candidate in "$HG/state/procevent"/.noisy-src.*.output; do
+    if [ -f "$candidate" ]; then staged=$candidate; break; fi
+  done
+  [ -n "$staged" ] && break
+  sleep 0.1
+done
+[ -n "$staged" ] || fail "noisy source created no bounded staging file"
+sleep 0.2
+[ "$(wc -c < "$staged" | tr -d ' ')" -le 100 ] || fail "live staging exceeded the configured output bound"
+pe "$HG" retire noisy-src >/dev/null
+kill -0 "$noisy_child" 2>/dev/null && fail "TERM-resistant source child survived runner retirement"
+assert_absent "$staged" "retirement removes the tracked partial staging file"
+pass "live output stays bounded and retirement reaps the whole source group"
+
+HBAD="$TMP_ROOT/hbad"; new_home "$HBAD"
+pe_register "$HBAD" lavish bad-limit -- /bin/true >/dev/null
+bad_limit_status=0
+bad_limit_out=$(FM_PROCEVENT_MAX_OUTPUT_BYTES=invalid pe "$HBAD" start bad-limit 2>&1) || bad_limit_status=$?
+[ "$bad_limit_status" -ne 0 ] || fail "an invalid output bound was accepted"
+assert_contains "$bad_limit_out" "must be a nonnegative integer" "invalid output bound reports its contract"
+assert_absent "$FM_PROCEVENT_CLAIM_ROOT/bad-limit.claim" "invalid output bound leaves no source claim"
+pass "invalid output bounds fail closed"
 
 # --- the Lavish adapter uses the published poll shape -----------------------
 ART="$TMP_ROOT/artifact.html"

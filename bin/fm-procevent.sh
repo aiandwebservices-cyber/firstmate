@@ -8,7 +8,7 @@
 #   fm-procevent.sh start <source-id>
 #   fm-procevent.sh reconcile
 #   fm-procevent.sh retire <source-id>
-#   fm-procevent.sh sweep-home
+#   fm-procevent.sh sweep-home [--preflight]
 #   fm-procevent.sh list
 #
 # register   Record a source: its adapter, its canonical id, and the exact argv
@@ -61,6 +61,7 @@ adapter_script() { printf '%s/bin/fm-procevent-%s.sh\n' "$FM_ROOT" "$1"; }
 
 source_file()  { printf '%s/%s.source\n' "$REG" "$1"; }
 runner_file()  { printf '%s/%s.runner\n' "$REG" "$1"; }
+staging_file() { printf '%s/.%s.%s.output\n' "$REG" "$1" "$2"; }
 
 read_adapter() {  # <source-id>
   local f; f=$(source_file "$1")
@@ -69,8 +70,7 @@ read_adapter() {  # <source-id>
 }
 
 # Read the stored argv into the ARGV array. One argument per line after the
-# argv= count, so an argument containing spaces or newlines can never be
-# re-split into two arguments.
+# argv= count, so an argument containing spaces is not re-split.
 read_argv() {  # <source-id>
   local f n; f=$(source_file "$1")
   ARGV=()
@@ -92,6 +92,10 @@ cmd_register() {
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe and at most 64 characters: $id"
   [ "$sep" = -- ] || usage
   [ "$#" -ge 1 ] || die "register needs at least one argv element after --"
+  local arg
+  for arg in "$@"; do
+    case "$arg" in *$'\n'*) die "argv elements cannot contain newlines" ;; esac
+  done
   [ -f "$(adapter_script "$adapter")" ] || die "no installed adapter for: $adapter"
   (umask 077; mkdir -p "$REG") || die "cannot create the source registry"
   local tmp dest
@@ -117,16 +121,17 @@ cmd_register() {
 # Publish every durably captured result that has not been announced. Capture
 # already happened, so this only turns durable state into durable events.
 publish_pending() {
-  local result id adapter line published=0
+  local result id seq adapter line published=0
   while IFS= read -r result; do
     [ -n "$result" ] || continue
     id=$(fm_procevent_result_source_id "$result")
+    seq=$(fm_procevent_result_sequence "$result")
     fm_procevent_source_id_valid "$id" || continue
     adapter=$(read_adapter "$id" 2>/dev/null || true)
     [ -n "$adapter" ] || adapter=unknown
     fm_procevent_adapter_valid "$adapter" || adapter=unknown
-    line=$(fm_procevent_event_line "$adapter" "$id") || continue
-    fm_wake_append check "procevent:$id" "check: $line" || continue
+    line=$(fm_procevent_event_line "$adapter" "$id" "$seq") || continue
+    fm_wake_append check "procevent:$id:$seq" "check: $line" || continue
     fm_procevent_mark_announced "$result" || continue
     published=$((published + 1))
   done < <(fm_procevent_pending "$STATE")
@@ -134,7 +139,7 @@ publish_pending() {
 }
 
 cmd_start() {
-  local id=${1-} adapter out rc claimed
+  local id=${1-} adapter out rc claimed bound_rc
   fm_procevent_source_id_valid "$id" || die "source id must be path-safe: $id"
   fm_procevent_source_lock_acquire "$id" || die "cannot lock source: $id"
   if [ ! -f "$(source_file "$id")" ] || [ -L "$(source_file "$id")" ]; then
@@ -165,7 +170,9 @@ cmd_start() {
   CLAIM_HOME=$FM_HOME
   CLAIM_PID=$$
   CLAIM_TOKEN=$FM_PROCEVENT_CLAIM_TOKEN
+  STAGED_OUTPUT=
   release_start_claim() {
+    [ -z "$STAGED_OUTPUT" ] || rm -f -- "$STAGED_OUTPUT"
     fm_procevent_source_lock_acquire "$CLAIM_ID" 2>/dev/null || return 0
     fm_procevent_claim_release_locked "$CLAIM_ID" "$CLAIM_HOME" "$CLAIM_PID" "$CLAIM_TOKEN" 2>/dev/null || true
     fm_procevent_source_lock_release "$CLAIM_ID" 2>/dev/null || true
@@ -174,19 +181,43 @@ cmd_start() {
   printf '%s\n' "$$" > "$(runner_file "$id")" 2>/dev/null || true
   chmod 0600 "$(runner_file "$id")" 2>/dev/null || true
 
-  out=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-procevent.XXXXXX") || die "cannot stage output"
-  # Direct execution of the stored argv: no shell, no re-splitting.
-  "${ARGV[@]}" > "$out" 2>/dev/null
-  rc=$?
-
-  # Bounded output: an oversized result is truncated rather than published whole,
-  # and never silently dropped.
-  local bytes truncated=0
-  bytes=$(wc -c < "$out" | tr -d '[:space:]')
-  if [ "${bytes:-0}" -gt "$MAX_OUTPUT_BYTES" ]; then
-    head -c "$MAX_OUTPUT_BYTES" "$out" > "$out.cut" 2>/dev/null && mv -f "$out.cut" "$out"
-    truncated=1
-  fi
+  case "$MAX_OUTPUT_BYTES" in ''|*[!0-9]*) die "FM_PROCEVENT_MAX_OUTPUT_BYTES must be a nonnegative integer" ;; esac
+  out=$(staging_file "$id" "$CLAIM_TOKEN")
+  [ ! -e "$out" ] && [ ! -L "$out" ] || die "cannot safely stage output"
+  (umask 077; : > "$out") || die "cannot stage output"
+  STAGED_OUTPUT=$out
+  "${ARGV[@]}" 2>/dev/null | perl -e '
+    use strict;
+    use warnings;
+    my $limit = shift;
+    my ($written, $truncated) = (0, 0);
+    while (1) {
+      my $count = sysread(STDIN, my $buffer, 65536);
+      exit 2 unless defined $count;
+      last if $count == 0;
+      my $take = $written < $limit ? $limit - $written : 0;
+      $take = $count if $take > $count;
+      if ($take > 0) {
+        my $offset = 0;
+        while ($offset < $take) {
+          my $count_written = syswrite(STDOUT, $buffer, $take - $offset, $offset);
+          exit 2 unless defined $count_written;
+          $offset += $count_written;
+        }
+        $written += $take;
+      }
+      $truncated = 1 if $take < $count;
+    }
+    exit($truncated ? 3 : 0);
+  ' "$MAX_OUTPUT_BYTES" > "$out"
+  local pipe_status=("${PIPESTATUS[@]}") truncated=0
+  rc=${pipe_status[0]}
+  bound_rc=${pipe_status[1]}
+  case "$bound_rc" in
+    0) ;;
+    3) truncated=1 ;;
+    *) die "cannot bound source output" ;;
+  esac
 
   if [ "$rc" -ne 0 ] && [ ! -s "$out" ]; then
     # No usable result. Leave the registration armed; the adapter decides
@@ -199,6 +230,7 @@ cmd_start() {
   local durable
   durable=$(fm_procevent_capture "$STATE" "$id" "$out") || { rm -f -- "$out"; die "cannot durably capture the result"; }
   rm -f -- "$out"
+  STAGED_OUTPUT=
   [ "$truncated" -eq 1 ] && printf 'truncated: %s at %s bytes\n' "$id" "$MAX_OUTPUT_BYTES" >&2
 
   publish_pending >/dev/null
@@ -254,6 +286,7 @@ cmd_reconcile() {
     case "$stop_state" in
       0|1)
         if fm_procevent_claim_release_locked "$id" "$owner" "$pid" "$token" 2>/dev/null; then
+          rm -f -- "$(staging_file "$id" "$token")"
           rm -f -- "$(runner_file "$id")"
           stopped=$((stopped + 1))
         else
@@ -294,32 +327,29 @@ cmd_reconcile() {
 # blocking child - signalling only the runner would leave that child alive and
 # reparented, which is exactly how a source that never completes leaks.
 stop_runner_pid() {  # <pid> <identity>
-  local pid=${1-} identity=${2-} state i=0
+  local pid=${1-} identity=${2-} state pgid i=0
   case "$pid" in ''|*[!0-9]*) return 2 ;; esac
   [ -n "$identity" ] || return 2
   fm_procevent_pid_state "$pid" "$identity"
   state=$?
   [ "$state" -eq 0 ] || return "$state"
-  kill -TERM -"$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]') || return 2
+  [ "$pgid" = "$pid" ] || return 2
+  kill -TERM -"$pid" 2>/dev/null || return 2
   while [ "$i" -lt 20 ]; do
-    fm_procevent_pid_state "$pid" "$identity"
-    state=$?
-    [ "$state" -eq 1 ] && return 0
-    [ "$state" -eq 2 ] && return 2
+    kill -0 -"$pid" 2>/dev/null || return 0
+    if kill -0 "$pid" 2>/dev/null; then
+      fm_procevent_pid_state "$pid" "$identity"
+      state=$?
+      [ "$state" -eq 2 ] && return 2
+    fi
     sleep 0.1
     i=$((i + 1))
   done
-  fm_procevent_pid_state "$pid" "$identity"
-  state=$?
-  [ "$state" -eq 1 ] && return 0
-  [ "$state" -eq 2 ] && return 2
-  kill -KILL -"$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  kill -KILL -"$pid" 2>/dev/null || return 2
   i=0
   while [ "$i" -lt 20 ]; do
-    fm_procevent_pid_state "$pid" "$identity"
-    state=$?
-    [ "$state" -eq 1 ] && return 0
-    [ "$state" -eq 2 ] && return 2
+    kill -0 -"$pid" 2>/dev/null || return 0
     sleep 0.1
     i=$((i + 1))
   done
@@ -350,6 +380,7 @@ cmd_retire() {
         fm_procevent_source_lock_release "$id"
         die "cannot release source ownership: $id"
       fi
+      rm -f -- "$(staging_file "$id" "$token")"
     fi
   fi
   rm -f -- "$(source_file "$id")"
@@ -402,7 +433,8 @@ sweep_source_preflight() {
 }
 
 cmd_sweep_home() {
-  local path id owner attempted=0 failed=0
+  local preflight_only=${1-} path id owner attempted=0 failed=0
+  [ -z "$preflight_only" ] || [ "$preflight_only" = --preflight ] || usage
   SWEEP_IDS=$'\n'
   for path in "$REG"/*.source; do
     if [ -e "$path" ] || [ -L "$path" ]; then
@@ -446,6 +478,10 @@ cmd_sweep_home() {
     printf 'error: process-event home sweep preflight failed: attempted=0 failed=%s\n' "$failed" >&2
     return 1
   fi
+  if [ "$preflight_only" = --preflight ]; then
+    printf 'sweep preflight: ready\n'
+    return 0
+  fi
   while IFS= read -r id; do
     [ -n "$id" ] || continue
     attempted=$((attempted + 1))
@@ -486,7 +522,7 @@ case "${1-}" in
   start)     shift; cmd_start "$@" ;;
   reconcile) shift; cmd_reconcile "$@" ;;
   retire)    shift; cmd_retire "$@" ;;
-  sweep-home) shift; [ "$#" -eq 0 ] || usage; cmd_sweep_home ;;
+  sweep-home) shift; cmd_sweep_home "$@" ;;
   list)      shift; cmd_list "$@" ;;
   ''|-h|--help|help) usage ;;
   *) die "unknown command: $1" ;;

@@ -213,25 +213,29 @@ fm_procevent_capture() {
 # Print every durably captured result that has not been announced yet, oldest
 # first. This is what makes a restart between capture and publication recover.
 fm_procevent_pending() {
-  local state=$1 inbox result
+  local state=$1 inbox result base seq
   inbox=$(fm_procevent_inbox_dir "$state")
   [ -d "$inbox" ] || return 0
   for result in "$inbox"/*.result; do
     [ -f "$result" ] && [ ! -L "$result" ] || continue
     [ -e "${result%.result}.announced" ] && continue
-    printf '%s\n' "$result"
-  done
+    base=${result%.result}
+    seq=${base##*.}
+    case "$seq" in ''|*[!0-9]*) continue ;; esac
+    printf '%s\t%s\n' "$seq" "$result"
+  done | sort -n -k1,1 -k2,2 | cut -f2-
 }
 
-# fm_procevent_event_line <adapter> <source-id>
+# fm_procevent_event_line <adapter> <source-id> <sequence>
 # The complete normalized event. Bounded by construction: a fixed verb, a
 # validated adapter name, and a validated id. No source output, path, or
 # caller-supplied text can appear here.
 fm_procevent_event_line() {
-  local adapter=$1 id=$2
+  local adapter=$1 id=$2 seq=$3
   fm_procevent_adapter_valid "$adapter" || return 1
   fm_procevent_source_id_valid "$id" || return 1
-  printf 'procevent %s %s\n' "$adapter" "$id"
+  case "$seq" in ''|*[!0-9]*) return 1 ;; esac
+  printf 'procevent %s %s %s\n' "$adapter" "$id" "$seq"
 }
 
 # fm_procevent_mark_announced <result-path>
@@ -250,4 +254,10 @@ fm_procevent_result_source_id() {
   local base=${1##*/}
   base=${base%.result}
   printf '%s\n' "${base%.*}"
+}
+
+fm_procevent_result_sequence() {
+  local base=${1##*/}
+  base=${base%.result}
+  printf '%s\n' "${base##*.}"
 }

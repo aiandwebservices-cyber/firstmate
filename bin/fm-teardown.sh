@@ -1059,7 +1059,20 @@ cleanup_firstmate_home_process_events() {
   fi
 }
 
-cleanup_firstmate_home_process_event_tree() {
+preflight_firstmate_home_process_events() {
+  local home=$1 label=$2 runner="$1/bin/fm-procevent.sh"
+  firstmate_home_has_process_events "$home" || return 0
+  if [ ! -f "$runner" ] || [ -L "$runner" ] || [ ! -x "$runner" ]; then
+    echo "REFUSED: $label $home has process-event state but no sweep-capable bin/fm-procevent.sh; restore the home script and rerun teardown" >&2
+    return 1
+  fi
+  if ! FM_HOME="$home" FM_ROOT_OVERRIDE="$home" "$runner" sweep-home --preflight >/dev/null; then
+    echo "REFUSED: process-event cleanup cannot safely proceed for $label $home; preserving the home, lease, and retirement records for retry" >&2
+    return 1
+  fi
+}
+
+preflight_firstmate_home_process_event_tree() {
   local home=$1 label=$2 sub_state child_meta child_kind child_home child_wt child_id
   sub_state="$home/state"
   if [ -d "$sub_state" ]; then
@@ -1071,10 +1084,10 @@ cleanup_firstmate_home_process_event_tree() {
       child_wt=$(meta_value "$child_meta" worktree)
       child_home=$(meta_value "$child_meta" home)
       [ -n "$child_home" ] || child_home=$child_wt
-      cleanup_firstmate_home_process_event_tree "$child_home" "child firstmate home for $child_id" || return 1
+      preflight_firstmate_home_process_event_tree "$child_home" "child firstmate home for $child_id" || return 1
     done
   fi
-  cleanup_firstmate_home_process_events "$home" "$label"
+  preflight_firstmate_home_process_events "$home" "$label"
 }
 
 validate_firstmate_home_children_removal() {
@@ -1293,7 +1306,7 @@ cleanup_firstmate_home_children() {
       [ -n "$child_home" ] || child_home=$child_wt
       if [ -n "$child_home" ] && [ -d "$child_home" ]; then
         cleanup_firstmate_home_children "$child_home" || return 1
-        remove_firstmate_home "$child_home" "child firstmate home" "$child_id"
+        remove_firstmate_home "$child_home" "child firstmate home" "$child_id" || return 1
       fi
     elif [ "$child_backend" = orca ]; then
       if [ -n "$child_wt" ] && [ -d "$child_wt" ]; then
@@ -1370,11 +1383,11 @@ if [ "$KIND" = secondmate ] && [ "$FORCE" != "--force" ]; then
 fi
 
 if [ "$KIND" = secondmate ]; then
-  cleanup_firstmate_home_process_event_tree "$HOME_PATH" "secondmate home" || exit 1
+  preflight_firstmate_home_process_event_tree "$HOME_PATH" "secondmate home" || exit 1
 fi
 
 if [ "$KIND" = secondmate ] && [ "$FORCE" = "--force" ]; then
-  cleanup_firstmate_home_children "$HOME_PATH"
+  cleanup_firstmate_home_children "$HOME_PATH" || exit 1
 fi
 
 if [ "$KIND" = scout ] && [ "$FORCE" != "--force" ]; then
@@ -1565,7 +1578,7 @@ if [ "$BACKEND" = herdr ]; then
 fi
 if [ "$KIND" = secondmate ]; then
   [ -n "$HOME_PATH" ] || HOME_PATH=$WT
-  remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID"
+  remove_firstmate_home "$HOME_PATH" "secondmate home" "$ID" || exit 1
   remove_secondmate_registry_entry "$ID"
 fi
 remove_grok_turnend_auth "$STATE" "$ID"
