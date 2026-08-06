@@ -417,7 +417,7 @@ Keys stay in the environment (`DEEPSEEK_API_KEY` preferred; `OPENROUTER_API_KEY`
 | Fact | Value |
 |---|---|
 | Binary | `hermes` on `PATH` (local wrapper may unset Buzz `PYTHONHOME` pollution); spawn refuses if missing. |
-| Credentials | Spawn refuses unless firstmate's own environment holds `DEEPSEEK_API_KEY` or `OPENROUTER_API_KEY`, and forwards the key onto the launch command: the crewmate pane inherits no captain environment. |
+| Credentials | Spawn refuses unless firstmate's own environment holds `DEEPSEEK_API_KEY` or `OPENROUTER_API_KEY`, because the crewmate pane inherits no captain environment. The key reaches the pane through a private `0600` file under the task temp root that the pane sources and deletes. No key value is ever typed into a pane or placed on a launch command. |
 | Launch | `bin/fm-zeus-worker.sh` → `hermes chat --yolo --accept-hooks --cli -m <model> --provider <provider>`, then readiness-gated brief pointer delivery. |
 | Default model | `deepseek-v4-flash` / provider `deepseek` when `DEEPSEEK_API_KEY` is set; else OpenRouter `deepseek/deepseek-v4-flash` with one stderr notice. |
 | Busy state | Unknown `hermes-unverified` until a semantic source is live-verified. Do not invent a spinner or footer regex. |

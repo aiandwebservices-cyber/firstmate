@@ -217,9 +217,20 @@ make_spawn_case() {
   printf '%s\n' "$case_dir|$home|$proj|$wt|$fakebin"
 }
 
+# Every call runs in a command substitution, so these unsets stay inside one case.
+# A real key exported by the developer or the CI runner must never reach fm-spawn:
+# an assertion that fails prints its whole haystack. A case opts into a synthetic
+# key with FM_TEST_DEEPSEEK_KEY / FM_TEST_OPENROUTER_KEY.
 run_spawn() {
   local case_dir=$1 home=$2 proj=$3 wt=$4 fakebin=$5 id=$6 harness=$7
   shift 7
+  unset DEEPSEEK_API_KEY OPENROUTER_API_KEY
+  if [ -n "${FM_TEST_DEEPSEEK_KEY:-}" ]; then
+    export DEEPSEEK_API_KEY="$FM_TEST_DEEPSEEK_KEY"
+  fi
+  if [ -n "${FM_TEST_OPENROUTER_KEY:-}" ]; then
+    export OPENROUTER_API_KEY="$FM_TEST_OPENROUTER_KEY"
+  fi
   HOME="$home" FM_ROOT_OVERRIDE='' FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
@@ -249,7 +260,7 @@ test_spawn_launches_zeus_worker_with_model_and_no_effort_flag() {
   rm -rf "$task_tmp"
   rec=$(make_spawn_case success "$id")
   read_spawn_record "$rec"
-  out=$(DEEPSEEK_API_KEY=ds-test-key run_spawn \
+  out=$(FM_TEST_DEEPSEEK_KEY=ds-test-key run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus \
     --model deepseek-v4-pro --effort high)
   rc=$?
@@ -260,8 +271,6 @@ test_spawn_launches_zeus_worker_with_model_and_no_effort_flag() {
   assert_contains "$launch" "$ROOT/bin/fm-zeus-worker.sh" \
     "zeus launch did not run the Zeus worker (hermes chat flags are the worker's own, covered above)"
   assert_contains "$launch" "--model 'deepseek-v4-pro'" "zeus launch lost the requested model"
-  assert_contains "$launch" "DEEPSEEK_API_KEY=" \
-    "zeus launch did not forward a key the pane cannot inherit"
   assert_not_contains "$launch" "--effort" "zeus launch emitted a nonexistent effort flag"
   assert_not_contains "$launch" "__ZEUSWORKER__" "zeus launch retained its worker placeholder"
   assert_not_contains "$launch" "__MODELFLAG__" "zeus launch retained its model placeholder"
@@ -273,7 +282,46 @@ test_spawn_launches_zeus_worker_with_model_and_no_effort_flag() {
   meta="$HOME_DIR/state/$id.meta"
   assert_grep 'harness=zeus' "$meta" "zeus meta did not record its own harness name"
   assert_grep 'effort=high' "$meta" "zeus meta did not retain the unsupported effort axis"
-  pass "fm-spawn: zeus launches the Zeus worker, forwards its key, and delivers the brief"
+  pass "fm-spawn: zeus launches the Zeus worker with its model and no effort flag"
+}
+
+test_spawn_never_types_a_zeus_key_into_the_pane() {
+  local id rec rc typed env_file mode task_tmp
+  id="hermes-secret-z7-$$"
+  task_tmp="/tmp/fm-$id"
+  rm -rf "$task_tmp"
+  rec=$(make_spawn_case secret "$id")
+  read_spawn_record "$rec"
+  rc=0
+  FM_TEST_DEEPSEEK_KEY=ds-secret-value FM_TEST_OPENROUTER_KEY=or-secret-value run_spawn \
+    "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus >/dev/null || rc=$?
+  expect_code 0 "$rc" "zeus spawn should succeed while sourcing its keys from a file"
+
+  # Everything firstmate typed into the pane, plus the launch command itself.
+  typed=$(cat "$CASE_DIR/tmux-calls.log" "$CASE_DIR/launch.log")
+  case "$typed" in
+    *ds-secret-value*|*or-secret-value*)
+      fail "a Zeus API key value was typed into the crewmate pane" ;;
+  esac
+  case "$typed" in
+    *DEEPSEEK_API_KEY=*|*OPENROUTER_API_KEY=*)
+      fail "a Zeus key assignment reached the pane instead of the private env file" ;;
+  esac
+  assert_grep "set -a; . '$task_tmp/zeus-env'" "$CASE_DIR/tmux-calls.log" \
+    "the pane was never told to source its private Zeus env file"
+  assert_grep "rm -f '$task_tmp/zeus-env'" "$CASE_DIR/tmux-calls.log" \
+    "the pane was never told to delete its private Zeus env file"
+
+  env_file="$task_tmp/zeus-env"
+  assert_present "$env_file" "the private Zeus env file was not written"
+  mode=$(stat -c '%a' "$env_file" 2>/dev/null || stat -f '%Lp' "$env_file")
+  [ "$mode" = 600 ] || fail "the Zeus env file must be owner-only, got mode $mode"
+  assert_grep "DEEPSEEK_API_KEY='ds-secret-value'" "$env_file" \
+    "the Zeus env file did not carry the resolved DeepSeek key"
+  assert_grep "OPENROUTER_API_KEY='or-secret-value'" "$env_file" \
+    "the Zeus env file did not carry the resolved OpenRouter key"
+  rm -rf "$task_tmp"
+  pass "fm-spawn: Zeus keys reach the pane through a 0600 file, never as typed text"
 }
 
 test_spawn_records_hermes_harness_name() {
@@ -281,15 +329,17 @@ test_spawn_records_hermes_harness_name() {
   id="hermes-name-z2-$$"
   rec=$(make_spawn_case harness-name "$id")
   read_spawn_record "$rec"
-  out=$(unset DEEPSEEK_API_KEY; OPENROUTER_API_KEY=or-test-key run_spawn \
+  out=$(FM_TEST_OPENROUTER_KEY=or-test-key run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" hermes)
   rc=$?
   expect_code 0 "$rc" "hermes spawn should succeed on the same template"
   assert_contains "$out" "spawned $id harness=hermes" "hermes spawn did not report its own name"
   launch=$(cat "$CASE_DIR/launch.log")
   assert_contains "$launch" "$ROOT/bin/fm-zeus-worker.sh" "hermes launch did not run the Zeus worker"
-  assert_contains "$launch" "OPENROUTER_API_KEY=" "hermes launch did not forward the fallback key"
+  assert_grep "OPENROUTER_API_KEY='or-test-key'" "/tmp/fm-$id/zeus-env" \
+    "the OpenRouter fallback key did not reach the pane's private env file"
   assert_grep 'harness=hermes' "$HOME_DIR/state/$id.meta" "hermes meta collapsed into zeus"
+  rm -rf "/tmp/fm-$id"
   pass "fm-spawn: hermes and zeus share one template and each records its own harness"
 }
 
@@ -299,7 +349,7 @@ test_spawn_refuses_without_any_zeus_key() {
   rec=$(make_spawn_case no-key "$id")
   read_spawn_record "$rec"
   rc=0
-  out=$(unset DEEPSEEK_API_KEY OPENROUTER_API_KEY; run_spawn \
+  out=$(run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus) || rc=$?
   [ "$rc" -ne 0 ] || fail "keyless hermes/zeus spawn should refuse"
   assert_contains "$out" "DEEPSEEK_API_KEY" "keyless refusal did not name the required key"
@@ -315,7 +365,7 @@ test_spawn_never_treats_a_shell_prompt_as_ready() {
   rec=$(make_spawn_case shell-prompt "$id")
   read_spawn_record "$rec"
   rc=0
-  out=$(DEEPSEEK_API_KEY=ds-test-key FM_FAKE_HERMES_LAUNCHED_STATE=shell-prompt run_spawn \
+  out=$(FM_TEST_DEEPSEEK_KEY=ds-test-key FM_FAKE_HERMES_LAUNCHED_STATE=shell-prompt run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus) || rc=$?
   [ "$rc" -ne 0 ] || fail "a bare ❯ shell prompt must not pass the hermes readiness gate"
   assert_contains "$out" "did not show a verified ready signal" \
@@ -330,7 +380,7 @@ test_spawn_rejects_a_swallowed_submit() {
   rec=$(make_spawn_case swallowed "$id")
   read_spawn_record "$rec"
   rc=0
-  out=$(DEEPSEEK_API_KEY=ds-test-key FM_FAKE_HERMES_DELIVERY=swallowed run_spawn \
+  out=$(FM_TEST_DEEPSEEK_KEY=ds-test-key FM_FAKE_HERMES_DELIVERY=swallowed run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus) || rc=$?
   [ "$rc" -ne 0 ] || fail "a pointer left unsubmitted in the composer must fail the spawn"
   assert_contains "$out" "composer verdict: pending" \
@@ -347,7 +397,7 @@ test_spawn_unconfirmed_delivery_fails_loudly() {
   rec=$(make_spawn_case drop "$id")
   read_spawn_record "$rec"
   rc=0
-  out=$(DEEPSEEK_API_KEY=ds-test-key FM_FAKE_HERMES_DELIVERY=no run_spawn \
+  out=$(FM_TEST_DEEPSEEK_KEY=ds-test-key FM_FAKE_HERMES_DELIVERY=no run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus) || rc=$?
   [ "$rc" -ne 0 ] || fail "an unconfirmed hermes delivery should fail"
   assert_contains "$out" "hermes/zeus brief pointer delivery was not confirmed" \
@@ -423,6 +473,7 @@ test_worker_deepseek_default_launch
 test_worker_openrouter_fallback
 test_worker_model_override
 test_spawn_launches_zeus_worker_with_model_and_no_effort_flag
+test_spawn_never_types_a_zeus_key_into_the_pane
 test_spawn_records_hermes_harness_name
 test_spawn_refuses_without_any_zeus_key
 test_spawn_never_treats_a_shell_prompt_as_ready

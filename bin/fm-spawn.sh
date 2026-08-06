@@ -1374,6 +1374,7 @@ hermes_wait_for_delivery() {
 }
 
 hermes_spawn_fail() {  # <detail>
+  [ -z "${ZEUS_ENV_FILE:-}" ] || rm -f "$ZEUS_ENV_FILE"
   printf 'failed: %s\n' "$1" >> "$STATE/$ID.status"
   echo "error: $1; inspect window $T" >&2
 }
@@ -1761,17 +1762,28 @@ LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 if [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
 fi
-# Same daemon-environment gap for the Zeus stack's credentials: forward whichever
-# key firstmate itself resolved onto the launch command so fm-zeus-worker.sh can
-# pick its provider. Scoped to the launched process, never echoed by firstmate.
+# The Zeus stack's credentials face the same daemon-environment gap, but a key is
+# not a path: anything prefixed onto LAUNCH is typed into the pane as visible text
+# and then lives in its scrollback, its shell history file, and every pane-capture
+# surface (fm-peek, the composer probe's full-history capture). So hand the pane a
+# private per-task file instead and let it source and delete that file: firstmate
+# never renders a secret byte, and no launch command carries one.
+ZEUS_ENV_FILE=
 case "$HARNESS" in
   hermes|zeus)
-    if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
-      LAUNCH="DEEPSEEK_API_KEY=$(shell_quote "$DEEPSEEK_API_KEY") $LAUNCH"
-    fi
-    if [ -n "${OPENROUTER_API_KEY:-}" ]; then
-      LAUNCH="OPENROUTER_API_KEY=$(shell_quote "$OPENROUTER_API_KEY") $LAUNCH"
-    fi
+    ZEUS_ENV_FILE="$TASK_TMP/zeus-env"
+    zeus_old_umask=$(umask)
+    umask 077
+    : > "$ZEUS_ENV_FILE"
+    umask "$zeus_old_umask"
+    {
+      if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+        printf 'DEEPSEEK_API_KEY=%s\n' "$(shell_quote "$DEEPSEEK_API_KEY")"
+      fi
+      if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+        printf 'OPENROUTER_API_KEY=%s\n' "$(shell_quote "$OPENROUTER_API_KEY")"
+      fi
+    } >> "$ZEUS_ENV_FILE"
     ;;
 esac
 if [ "$KIND" = secondmate ]; then
@@ -1784,6 +1796,13 @@ fi
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 sleep 0.3
+# Zeus credentials: the pane exports them from the private file and removes it in
+# the same line, so only the path is ever typed and the file's life ends here.
+if [ -n "$ZEUS_ENV_FILE" ]; then
+  sq_zeus_env=$(shell_quote "$ZEUS_ENV_FILE")
+  spawn_send_text_line "$T" "set -a; . $sq_zeus_env; set +a; rm -f $sq_zeus_env"
+  sleep 0.3
+fi
 spawn_send_literal "$T" "$LAUNCH"
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then

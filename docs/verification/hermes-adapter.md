@@ -76,8 +76,13 @@ Delivery requires the exact `empty` submit verdict from `fm_tmux_submit_core` to
 A `pending` verdict means the Enter was swallowed and the pointer is still in the composer; that fails the spawn.
 
 The crewmate pane is created by a long-lived multiplexer daemon and inherits no captain environment.
-`fm-spawn.sh` therefore refuses a hermes/zeus spawn when neither `DEEPSEEK_API_KEY` nor `OPENROUTER_API_KEY` is set for firstmate, and forwards the resolved key onto the launch command.
-Without that pair of guards, a keyless pane exits `fm-zeus-worker.sh` back to a shell and every gate can pass against that shell.
+`fm-spawn.sh` therefore refuses a hermes/zeus spawn when neither `DEEPSEEK_API_KEY` nor `OPENROUTER_API_KEY` is set for firstmate.
+Without that guard, a keyless pane exits `fm-zeus-worker.sh` back to a shell and every gate can pass against that shell.
+
+The resolved key reaches the pane through `$TASK_TMP/zeus-env`, a `0600` file written with `umask 077`.
+The pane receives one line that sources the file, exports its contents, and deletes it; the launch command carries no key.
+This matters because everything typed into a pane persists in its scrollback and its shell history file, and `bin/fm-peek.sh` prints raw pane text straight into the captain's context.
+Do not restore an environment-prefix on the launch command: forwarding a path is safe, forwarding a credential is not.
 
 ## Busy state
 
