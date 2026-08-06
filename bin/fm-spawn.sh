@@ -70,7 +70,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|hermes|zeus)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. pi-signed launches that exact executable name from PATH and
@@ -345,6 +345,11 @@ spawn_abort_cleanup() {
     CONFIG_INHERIT_LOCK_HELD=0
     fm_lock_release "$CONFIG_INHERIT_LOCK" || true
   fi
+  # A signal during the readiness wait would otherwise strand the staged Zeus
+  # credentials in /tmp. This cannot race the pane: the readiness gate the
+  # success path clears requires a live worker, which requires the already
+  # sourced-and-deleted file.
+  [ -z "${ZEUS_ENV_FILE:-}" ] || rm -f "$ZEUS_ENV_FILE"
   return "$status"
 }
 trap spawn_abort_cleanup EXIT
@@ -425,7 +430,7 @@ FIRSTMATE_HOME=
 
 if [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi|pi-signed|grok|kimi)
+    ''|claude|codex|opencode|pi|pi-signed|grok|kimi|hermes|zeus)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -491,6 +496,11 @@ launch_template() {
     # Its turn-end signal is a globally configured Stop hook plus a guarded
     # per-task worktree token, so no launch placeholder belongs here.
     kimi) printf '%s' '__KIMIBIN__ __MODELFLAG__--auto' ;;
+    # Hermes Agent / Zeus stack: interactive `hermes chat --yolo --accept-hooks
+    # --cli` via bin/fm-zeus-worker.sh (Zeus DeepSeek defaults). Top-level
+    # `hermes -z` is one-shot and is not used for supervised workers. Brief
+    # delivery is readiness-gated after launch (same shape as kimi).
+    hermes|zeus) printf '%s' '__ZEUSWORKER__ __MODELFLAG__' ;;
     *) return 1 ;;
   esac
 }
@@ -603,7 +613,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi)
+    claude|codex|opencode|pi|pi-signed|grok|kimi|hermes|zeus)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
   esac
@@ -645,8 +655,8 @@ effort_flag_for_harness() {
     # opencode's interactive `opencode --prompt` launch has a verified --model
     # flag but no verified effort flag. Its `opencode run --variant` flag belongs
     # to a different, non-interactive launch mode, so fm-spawn does not pass it.
-    # kimi likewise has no reasoning-effort flag; the requested axis stays in
-    # task metadata but never reaches the launch command.
+    # kimi, hermes, and zeus have no reasoning-effort flag; the requested axis
+    # stays in task metadata but never reaches the launch command.
   esac
 }
 
@@ -660,6 +670,27 @@ case "$LAUNCH" in
         exit 1
       }
     fi
+    ;;
+esac
+
+case "$LAUNCH" in
+  *__ZEUSWORKER__*)
+    if [ ! -x "$FM_ROOT/bin/fm-zeus-worker.sh" ]; then
+      echo "error: fm-zeus-worker.sh missing or not executable at $FM_ROOT/bin/fm-zeus-worker.sh" >&2
+      exit 1
+    fi
+    if ! command -v hermes >/dev/null 2>&1; then
+      echo "error: hermes executable not found on PATH; install Hermes Agent before spawning harness hermes/zeus" >&2
+      exit 1
+    fi
+    # The crewmate pane does not inherit firstmate's environment, so a key that
+    # is absent HERE is a key fm-zeus-worker.sh will not have either: it would
+    # exit 1 and leave a bare shell behind a "spawned" line. Refuse before launch.
+    if [ -z "${DEEPSEEK_API_KEY:-}" ] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
+      echo "error: harness hermes/zeus needs DEEPSEEK_API_KEY (preferred) or OPENROUTER_API_KEY in firstmate's environment; the worker pane inherits neither otherwise" >&2
+      exit 1
+    fi
+    LAUNCH=${LAUNCH//__ZEUSWORKER__/$(shell_quote "$FM_ROOT/bin/fm-zeus-worker.sh")}
     ;;
 esac
 
@@ -1292,6 +1323,75 @@ kimi_spawn_fail() {  # <detail>
   echo "error: $1; inspect window $T" >&2
 }
 
+# Hermes/Zeus: same launch-then-send brief shape as kimi. Interactive
+# `hermes chat` has no verified positional brief; top-level -z is one-shot.
+hermes_capture() {
+  fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
+}
+
+hermes_capture_has_empty_composer() {  # <plain-pane-capture>
+  printf '%s\n' "$1" \
+    | grep -Eq '^[[:space:]]*(│|┃|\|)[[:space:]]*❯[[:space:]]*(│|┃|\|)[[:space:]]*$'
+}
+
+hermes_capture_is_ready() {  # <plain-pane-capture>
+  local pane=$1
+  # Harness-owned signals only. A bare ❯ row is the default prompt glyph of
+  # several shells, so it would confirm readiness on a pane whose worker already
+  # exited - the brief would then be typed into a dead shell.
+  printf '%s\n' "$pane" | grep -Fq 'Welcome to Hermes Agent!' && return 0
+  printf '%s\n' "$pane" | grep -Fq '⚠ YOLO' && return 0
+  hermes_capture_has_empty_composer "$pane" && return 0
+  return 1
+}
+
+hermes_wait_for_ready() {
+  local pane i=0 max=${FM_HERMES_READY_POLLS:-60} interval=${FM_HERMES_POLL_INTERVAL:-0.5}
+  while [ "$i" -lt "$max" ]; do
+    pane=$(hermes_capture)
+    hermes_capture_is_ready "$pane" && return 0
+    i=$((i + 1))
+    [ "$i" -ge "$max" ] || sleep "$interval"
+  done
+  return 1
+}
+
+# Hermes replaces the composer row with this hint bar for the whole turn, so a
+# mid-turn pane never reads as an empty composer. The token is harness-owned:
+# no shell echo of our own pointer can produce it.
+hermes_capture_is_in_turn() {  # <plain-pane-capture>
+  printf '%s\n' "$1" | grep -Fq 'msg=interrupt'
+}
+
+hermes_delivery_is_confirmed() {  # <plain-pane-capture>
+  local pane=$1
+  # The pointer text alone is not delivery: it reads identically while it still
+  # sits unsubmitted in the composer, and while a dead shell echoes it back. Proof
+  # that it became a turn is a Hermes frame that no longer holds it in the
+  # composer - either the composer cleared, or the in-turn hint bar took its place
+  # because the turn is already running on the pointer we sent.
+  printf '%s\n' "$pane" | grep -Fq 'Read the brief at' || return 1
+  hermes_capture_has_empty_composer "$pane" && return 0
+  hermes_capture_is_in_turn "$pane"
+}
+
+hermes_wait_for_delivery() {
+  local pane i=0 max=${FM_HERMES_DELIVERY_POLLS:-40} interval=${FM_HERMES_POLL_INTERVAL:-0.5}
+  while [ "$i" -lt "$max" ]; do
+    pane=$(hermes_capture)
+    hermes_delivery_is_confirmed "$pane" && return 0
+    i=$((i + 1))
+    [ "$i" -ge "$max" ] || sleep "$interval"
+  done
+  return 1
+}
+
+hermes_spawn_fail() {  # <detail>
+  [ -z "${ZEUS_ENV_FILE:-}" ] || rm -f "$ZEUS_ENV_FILE"
+  printf 'failed: %s\n' "$1" >> "$STATE/$ID.status"
+  echo "error: $1; inspect window $T" >&2
+}
+
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
@@ -1397,6 +1497,10 @@ if [ "$KIND" != secondmate ]; then
         echo "error: kimi semantic busy-state wiring is not implemented; open the gate only together with verified wiring" >&2
         exit 1
       fi
+      ;;
+    hermes*|zeus*)
+      # Hermes/Zeus stay unknown until a semantic busy source is live-verified
+      # (bin/fm-busy-lib.sh). Do not arm or invent a rendered busy signature.
       ;;
   esac
   case "$HARNESS" in
@@ -1671,6 +1775,41 @@ LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 if [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
 fi
+# The Zeus stack's credentials face the same daemon-environment gap, but a key is
+# not a path: anything prefixed onto LAUNCH is typed into the pane as visible text
+# and then lives in its scrollback, its shell history file, and every pane-capture
+# surface (fm-peek, the composer probe's full-history capture). So hand the pane a
+# private per-task file instead and let it source and delete that file: firstmate
+# never renders a secret byte, and no launch command carries one.
+# The task temp root is a predictable name in a world-writable /tmp, so a bare
+# redirect onto a fixed path there would follow a pre-planted symlink and a mode
+# set by whoever created it. Require a directory this user owns, then let mktemp
+# create the file itself: an unpredictable name, opened O_EXCL as a regular file.
+ZEUS_ENV_FILE=
+case "$HARNESS" in
+  hermes|zeus)
+    if [ -L "$TASK_TMP" ] || [ ! -d "$TASK_TMP" ] || [ ! -O "$TASK_TMP" ]; then
+      hermes_spawn_fail "refusing to stage Zeus credentials: $TASK_TMP is not a directory owned by this user"
+      exit 1
+    fi
+    zeus_old_umask=$(umask)
+    umask 077
+    ZEUS_ENV_FILE=$(mktemp "$TASK_TMP/zeus-env.XXXXXX") || {
+      umask "$zeus_old_umask"
+      hermes_spawn_fail "could not create a private file for the Zeus credentials under $TASK_TMP"
+      exit 1
+    }
+    umask "$zeus_old_umask"
+    {
+      if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+        printf 'DEEPSEEK_API_KEY=%s\n' "$(shell_quote "$DEEPSEEK_API_KEY")"
+      fi
+      if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+        printf 'OPENROUTER_API_KEY=%s\n' "$(shell_quote "$OPENROUTER_API_KEY")"
+      fi
+    } >> "$ZEUS_ENV_FILE"
+    ;;
+esac
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
   sq_primary_home=$(shell_quote "$FM_HOME")
@@ -1681,6 +1820,13 @@ fi
 # the env is set when the agent starts; the brief sleep lets the export land.
 spawn_send_text_line "$T" "export GOTMPDIR=$TASK_TMP/gotmp"
 sleep 0.3
+# Zeus credentials: the pane exports them from the private file and removes it in
+# the same line, so only the path is ever typed and the file's life ends here.
+if [ -n "$ZEUS_ENV_FILE" ]; then
+  sq_zeus_env=$(shell_quote "$ZEUS_ENV_FILE")
+  spawn_send_text_line "$T" "set -a; . $sq_zeus_env; set +a; rm -f $sq_zeus_env"
+  sleep 0.3
+fi
 spawn_send_literal "$T" "$LAUNCH"
 sleep 0.3
 if [ "${HERDR_PROJECTED:-0}" -eq 1 ]; then
@@ -1712,6 +1858,37 @@ if [ "$HARNESS" = kimi ]; then
     exit 1
   fi
 fi
+case "$HARNESS" in
+  hermes|zeus)
+    if ! hermes_wait_for_ready; then
+      hermes_spawn_fail "hermes/zeus did not show a verified ready signal before brief delivery"
+      exit 1
+    fi
+    HERMES_POINTER="Read the brief at $BRIEF_REAL and follow it exactly."
+    HERMES_SUBMIT_RETRIES=${FM_HERMES_SUBMIT_RETRIES:-3}
+    HERMES_SUBMIT_SLEEP=${FM_HERMES_SUBMIT_SLEEP:-${FM_HERMES_POLL_INTERVAL:-0.5}}
+    HERMES_SUBMIT_SETTLE=${FM_HERMES_SUBMIT_SETTLE:-0}
+    HERMES_SUBMIT_VERDICT=$(fm_backend_send_text_submit \
+      "$BACKEND" "$T" "$HERMES_POINTER" "$HERMES_SUBMIT_RETRIES" \
+      "$HERMES_SUBMIT_SLEEP" "$HERMES_SUBMIT_SETTLE" "$W") || {
+      hermes_spawn_fail "hermes/zeus brief pointer could not be submitted"
+      exit 1
+    }
+    # Only `send-failed` proves nothing was typed. A short retry budget cannot
+    # distinguish a swallowed Enter from an accepted one: Hermes shows its in-turn
+    # hint bar - not an empty composer - for the whole turn the pointer started, so
+    # requiring `empty` here would fail a spawn that already delivered. The
+    # delivery gate below carries that proof instead.
+    if [ "$HERMES_SUBMIT_VERDICT" = send-failed ]; then
+      hermes_spawn_fail "hermes/zeus brief pointer could not be submitted (composer verdict: $HERMES_SUBMIT_VERDICT)"
+      exit 1
+    fi
+    if ! hermes_wait_for_delivery; then
+      hermes_spawn_fail "hermes/zeus brief pointer delivery was not confirmed"
+      exit 1
+    fi
+    ;;
+esac
 if [ "$KIND" = secondmate ]; then
   if ! fm_config_reread_discard_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then
     if fm_config_reread_quarantine_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then

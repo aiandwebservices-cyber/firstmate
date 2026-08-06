@@ -1,6 +1,6 @@
 ---
 name: harness-adapters
-description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, and kimi.
+description: Agent-only reference for firstmate harness operations. Use before spawning or recovering a crewmate or secondmate, handling a trust dialog, sending a harness-specific skill invocation, interrupting or exiting an agent, resuming an exited agent, or verifying a new harness adapter. Contains verified facts for claude, codex, opencode, pi, pi-signed, grok, kimi, hermes, and zeus.
 user-invocable: false
 metadata:
   internal: true
@@ -127,6 +127,7 @@ The supported launch-profile flags below are verified locally; each row records 
 | pi / pi-signed | `--model <model>` | `--thinking <low\|medium\|high\|xhigh\|max>` | Verified 2026-07-27 on Pi and pi-signed 0.82.0. Both expose the same accepted thinking levels and completed the same model-qualified max-thinking smoke. |
 | opencode | `--model <provider/model>` | none for firstmate's interactive launch | Verified on opencode 1.17.6. `opencode run` has `--variant`, but firstmate launches the interactive `opencode --prompt` path, which has no verified effort flag. |
 | kimi | `--model <model>` | none | Verified 2026-07-25 on Kimi Code CLI 0.29.1. |
+| hermes / zeus | `--model <model>` (optional; Zeus defaults apply) | none | Verified 2026-08-06 on Hermes Agent v0.18.2. Provider is chosen by `bin/fm-zeus-worker.sh` from keys, not by an effort flag. |
 
 The concrete `harness` field owns adapter identity independently of the model provider: `harness=pi` with `model=xai/grok-*` is Pi using xAI, not `harness=grok`, and does not require Grok CLI login; `harness=grok` remains the standalone Grok Build CLI adapter.
 No script resolves that split for you: establish which credential store a tuple reads from the discovery surfaces below plus `quota-axi auth --json`'s per-provider sources, and show that reasoning rather than inferring it from a harness, model, or source name.
@@ -144,6 +145,7 @@ Use the discovery surface in the current authenticated environment because suppo
 | pi / pi-signed | Run the selected executable as `<executable> --list-models [search]`; Pi's installed `docs/models.md` owns how built-in, extension-registered, and custom provider/model entries reach that list. |
 | grok | Run `grok models`, which lists the models available to the current Grok installation and account. |
 | kimi | Run `kimi provider list --json`, which lists the current provider and model configuration. |
+| hermes / zeus | Run `hermes status` and `hermes model` (interactive picker). Zeus defaults are `deepseek-v4-flash` with provider `deepseek` when `DEEPSEEK_API_KEY` is set. |
 
 For an unfamiliar harness or model namespace, establish support and provider identity from that harness's authoritative CLI help, model listing, or current documentation rather than guessing from a name or prefix.
 A listing that reaches the account and does not contain the model is concrete evidence the model is unsupported: block that candidate and quote the result.
@@ -163,6 +165,7 @@ Natural language is acceptable if uncertain.
 - pi and pi-signed: no separate verified skill invocation beyond normal command behavior; use natural language if the exact skill command is uncertain.
 - grok: `/<skill>`, for example `/no-mistakes` (same form as claude). Verified end to end: grok discovers the user-level `no-mistakes` skill, `/no-mistakes` invokes it, and grok drives a real `no-mistakes axi run`. Like codex's `$`/`/` popups, typing `/<skill>` opens grok's slash-autocomplete, so a too-fast Enter selects the popup entry instead of sending, and for an argument-taking command (like `/no-mistakes`'s optional task-first argument) that first Enter only expands the popup selection into an argument-hint placeholder rather than submitting - a genuine second Enter is required (see the grok section below for the 2026-07-03 incident and fix). `fm_tmux_submit_core`'s retried Enter (used by `fm-send` on the tmux backend) handles this through the structural composer reader; the herdr backend needed a dedicated fix (`fm_backend_herdr_composer_state`, docs/herdr-backend.md) because its prior delta-based verification false-positived on that same popup-close content change.
 - kimi: `/<skill>`, for example `/no-mistakes`.
+- hermes / zeus: `/<skill>`, for example `/no-mistakes` (slash commands; same form as claude).
 
 ## Submission acknowledgement hazards
 
@@ -397,3 +400,42 @@ The delivery-only spinner match covers the full moon-phase glyph set rather than
 Each Kimi crew worktree receives a gitignored `.fm-kimi-turnend` token pointer, and the global hook touches that task's `state/<id>.turn-ended` only when the Stop payload's `cwd`, pointer, and registry entry all agree.
 A guarded silent hook cannot be verified from absence of effect, so prove invocation with an unguarded probe before concluding that the hook did not fire.
 The guarded turn-end signal remains a wake notification; standalone Kimi has no busy-state source until one is live-verified.
+
+## hermes and zeus (VERIFIED 2026-08-06, Hermes Agent v0.18.2 local; VPS Zeus aerolot-zeus Hermes v0.19.1)
+
+Local Hermes Agent (`hermes`) is the Firstmate coding worker.
+`zeus` is the captain-facing alias that launches the same process through `bin/fm-zeus-worker.sh` with the Zeus DeepSeek model stack.
+Meta records the selected name (`harness=hermes` or `harness=zeus`) without collapsing them.
+
+**VPS Zeus vs local worker boundary.**
+VPS host `root@178.156.175.68` container `aerolot-zeus` is coach and ACP for Desktop/Buzz (`zeus-acp` runs `docker exec … hermes acp`).
+Firstmate crew workers do **not** run inside that container and do **not** use Buzz ACP.
+Workers run a local `hermes` process with `cwd` equal to the task worktree so tools edit local files.
+Inference uses the same DeepSeek stack as VPS Zeus (`deepseek-v4-flash`, provider `deepseek`, fallback model `deepseek-v4-pro` on the VPS config).
+Keys stay in the environment (`DEEPSEEK_API_KEY` preferred; `OPENROUTER_API_KEY` with model `deepseek/deepseek-v4-flash` is an acceptable documented fallback).
+
+| Fact | Value |
+|---|---|
+| Binary | `hermes` on `PATH` (local wrapper may unset Buzz `PYTHONHOME` pollution); spawn refuses if missing. |
+| Credentials | Spawn refuses unless firstmate's own environment holds `DEEPSEEK_API_KEY` or `OPENROUTER_API_KEY`, because the crewmate pane inherits no captain environment. The key reaches the pane through a private `0600` file under the task temp root that the pane sources and deletes. No key value is ever typed into a pane or placed on a launch command. |
+| Launch | `bin/fm-zeus-worker.sh` → `hermes chat --yolo --accept-hooks --cli -m <model> --provider <provider>`, then readiness-gated brief pointer delivery. |
+| Default model | `deepseek-v4-flash` / provider `deepseek` when `DEEPSEEK_API_KEY` is set; else OpenRouter `deepseek/deepseek-v4-flash` with one stderr notice. |
+| Busy state | Unknown `hermes-unverified` until a semantic source is live-verified. Do not invent a spinner or footer regex. |
+| Exit command | `/exit` (alias `/quit`); prints `Goodbye! ⚕`. |
+| Interrupt | `Ctrl+C` (classic REPL); not verified as Escape-equivalent for Hermes. |
+| Skill invocation | `/<skill>`, for example `/no-mistakes`. |
+| Autonomy | `--yolo` (footer shows `⚠ YOLO`); `--accept-hooks` auto-approves config shell hooks. |
+| Trust dialog | None observed on clean `--cli` launch in a temp cwd. |
+| Environment marker | None for firstmate detection; process ancestry command name matches `*hermes*`. The worker wrapper `exec`s into `hermes`, so its own name is never the live foreground command and is not matched. Many `HERMES_*` vars exist but none is a stable firstmate agent marker. |
+| Composer | Classic REPL bordered box with agent prompt glyph `❯` (already in `fm-composer-lib.sh`). |
+| Effort | No reasoning-effort flag; requested effort is recorded in meta only. |
+| One-shot vs interactive | Top-level `hermes -z PROMPT` is one-shot and exits after the turn. Supervised workers must use interactive `hermes chat` (not `-z`, not `hermes acp`). |
+| Out of scope | Primary turn-end guard for Hermes-as-primary; Buzz Desktop; `zeus-acp` ACP bridge. |
+
+`fm-spawn.sh` launches Hermes bare (via the Zeus worker), waits for `Welcome to Hermes Agent!`, `⚠ YOLO`, or a bordered empty `❯` composer, sends only `Read the brief at <absolute-path> and follow it exactly.`, and requires a delivery postcondition before accepting the spawn.
+Every one of those signals is harness-owned: a bare `❯` row on its own is the default prompt of several shells, so it must never gate readiness or delivery.
+Delivery needs the exact `empty` submit verdict (proof the composer cleared) plus the pointer visible in a still-Hermes pane; a `pending` verdict is a swallowed Enter and fails the spawn.
+This launch-then-send shape is mandatory because interactive `hermes chat` rejects a positional brief and `-z` does not leave a supervised pane.
+File tools write relative to the process cwd; `fm-spawn` starts the pane in the task worktree after `treehouse get`.
+
+Evidence: [`docs/verification/hermes-adapter.md`](../../../docs/verification/hermes-adapter.md).

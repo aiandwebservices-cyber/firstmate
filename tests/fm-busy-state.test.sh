@@ -272,6 +272,18 @@ test_kimi_unverified_gate() {
   pass "standalone kimi classifies unknown until the live verification gate opens"
 }
 
+test_hermes_unverified_gate() {
+  local state out
+  state=$(new_state_dir hermes-gate)
+  out=$(fm_busy_classify tmux w1 hermes t1 "$state")
+  [ "$out" = "unknown hermes-unverified" ] || fail "unverified hermes must classify unknown, got '$out'"
+  out=$(fm_busy_classify tmux w1 zeus t1 "$state" 'thinking')
+  [ "$out" = "unknown hermes-unverified" ] || fail "zeus must not invent busy from text, got '$out'"
+  [ -z "$(fm_busy_sources_for_harness hermes)" ] \
+    || fail "hermes must trust no semantic sources until verified"
+  pass "hermes/zeus classify unknown hermes-unverified with no trusted sources"
+}
+
 # --- endpoint death and native fallbacks ----------------------------------------
 
 test_dead_endpoint_overrides() {
@@ -372,6 +384,7 @@ test_converted_adapters_ignore_footer_text
 test_grok_regex_isolated
 test_codex_unverified_gate
 test_kimi_unverified_gate
+test_hermes_unverified_gate
 test_dead_endpoint_overrides
 test_herdr_native_busy_only
 test_record_read_leaves_caller_shell_intact
