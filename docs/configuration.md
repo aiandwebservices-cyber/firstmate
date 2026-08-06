@@ -193,7 +193,9 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 ## Harness support
 
-claude, codex, opencode, pi, pi-signed, grok, and kimi are empirically verified for crewmate and secondmate launches; [README requirements](../README.md#requirements) own the set supported for the primary session.
+claude, codex, opencode, pi, pi-signed, grok, kimi, hermes, and zeus are empirically verified for crewmate and secondmate launches; [README requirements](../README.md#requirements) own the set supported for the primary session.
+hermes and zeus launch the same local Hermes Agent process through [`bin/fm-zeus-worker.sh`](../bin/fm-zeus-worker.sh) with the Zeus DeepSeek model stack.
+The worker pane inherits no captain environment, so the spawn refuses unless firstmate's own environment holds `DEEPSEEK_API_KEY` or `OPENROUTER_API_KEY`.
 New harnesses get verified through a supervised trial task before joining the set.
 The verified adapter knowledge - each harness's busy-state source, interrupt and exit commands, skill-invocation syntax, and per-harness quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
 Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
