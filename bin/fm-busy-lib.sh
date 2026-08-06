@@ -34,6 +34,7 @@
 #   codex-hook, codex-appserver  reserved: Codex, gated by
 #                    fm_busy_codex_semantic_source
 #   kimi-wire, kimi-hook  reserved: standalone Kimi, gated by fm_busy_kimi_verified
+#   hermes-*              reserved: Hermes/Zeus, gated closed (no live source yet)
 # Firstmate-owned sources accepted for every converted adapter:
 #   fm-spawn         the launch-brief turn seeded at spawn
 #   fm-interrupt     a firstmate-controlled interruption of the worker
@@ -41,12 +42,13 @@
 # Classifier-only sources (never written into a record):
 #   endpoint-gone, herdr-native, grok-regex, missing, malformed,
 #   gen-mismatch, source-mismatch, kimi-unverified, codex-unverified,
-#   capture-failed, no-target
+#   hermes-unverified, capture-failed, no-target
 #
 # Classification (fm_busy_classify): busy | idle | unknown | dead, always
 # with the producing source as the second token. Precedence:
 #   1. dead endpoint (fm_busy_classify_live only) -> dead endpoint-gone
 #   2. standalone Kimi before verification       -> unknown kimi-unverified
+#   2b. hermes/zeus before verification          -> unknown hermes-unverified
 #   3. a valid, gen-matching, source-trusted record -> its state and source
 #   4. no record at all: herdr's native busy verdict is trusted as busy
 #      (generation state is sufficient for busy, not for idle), then the
@@ -177,6 +179,11 @@ fm_busy_sources_for_harness() {  # <harness>
       fm_busy_kimi_verified || { printf ''; return 0; }
       adapter='kimi-wire kimi-hook'
       ;;
+    hermes*|zeus*)
+      # No live-verified semantic source (2026-08-06). Keep empty so any
+      # record classifies source-mismatch rather than trusting a fake writer.
+      printf ''; return 0
+      ;;
     *) printf ''; return 0 ;;
   esac
   printf '%s fm-spawn fm-interrupt fm-recovery' "$adapter"
@@ -276,6 +283,12 @@ fm_busy_classify() {  # <backend> <target> <harness> <id> <state-dir> [tail40]
         printf 'unknown codex-unverified'
         return 0
       fi
+      ;;
+    hermes*|zeus*)
+      # Honest unknown until a semantic source is live-verified. Do not invent
+      # a spinner or footer regex for Hermes (same gate pattern as kimi).
+      printf 'unknown hermes-unverified'
+      return 0
       ;;
   esac
   out=$(fm_busy_record_read "$state" "$id") && rc=0 || rc=$?

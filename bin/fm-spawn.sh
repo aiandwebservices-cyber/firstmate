@@ -70,7 +70,7 @@
 #   profile consultation. A --secondmate spawn is exempt and resolves the SECONDMATE
 #   harness (config/secondmate-harness -> config/crew-harness -> own), so the
 #   secondmate-vs-crewmate split is DURABLE across every respawn (recovery,
-#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi)
+#   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi|hermes|zeus)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
 #   new adapters. pi-signed launches that exact executable name from PATH and
@@ -425,7 +425,7 @@ FIRSTMATE_HOME=
 
 if [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi|pi-signed|grok|kimi)
+    ''|claude|codex|opencode|pi|pi-signed|grok|kimi|hermes|zeus)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -491,6 +491,11 @@ launch_template() {
     # Its turn-end signal is a globally configured Stop hook plus a guarded
     # per-task worktree token, so no launch placeholder belongs here.
     kimi) printf '%s' '__KIMIBIN__ __MODELFLAG__--auto' ;;
+    # Hermes Agent / Zeus stack: interactive `hermes chat --yolo --accept-hooks
+    # --cli` via bin/fm-zeus-worker.sh (Zeus DeepSeek defaults). Top-level
+    # `hermes -z` is one-shot and is not used for supervised workers. Brief
+    # delivery is readiness-gated after launch (same shape as kimi).
+    hermes|zeus) printf '%s' '__ZEUSWORKER__ __MODELFLAG__' ;;
     *) return 1 ;;
   esac
 }
@@ -603,7 +608,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    claude|codex|opencode|pi|pi-signed|grok|kimi)
+    claude|codex|opencode|pi|pi-signed|grok|kimi|hermes|zeus)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
   esac
@@ -645,8 +650,8 @@ effort_flag_for_harness() {
     # opencode's interactive `opencode --prompt` launch has a verified --model
     # flag but no verified effort flag. Its `opencode run --variant` flag belongs
     # to a different, non-interactive launch mode, so fm-spawn does not pass it.
-    # kimi likewise has no reasoning-effort flag; the requested axis stays in
-    # task metadata but never reaches the launch command.
+    # kimi, hermes, and zeus have no reasoning-effort flag; the requested axis
+    # stays in task metadata but never reaches the launch command.
   esac
 }
 
@@ -660,6 +665,20 @@ case "$LAUNCH" in
         exit 1
       }
     fi
+    ;;
+esac
+
+case "$LAUNCH" in
+  *__ZEUSWORKER__*)
+    if [ ! -x "$FM_ROOT/bin/fm-zeus-worker.sh" ]; then
+      echo "error: fm-zeus-worker.sh missing or not executable at $FM_ROOT/bin/fm-zeus-worker.sh" >&2
+      exit 1
+    fi
+    if ! command -v hermes >/dev/null 2>&1; then
+      echo "error: hermes executable not found on PATH; install Hermes Agent before spawning harness hermes/zeus" >&2
+      exit 1
+    fi
+    LAUNCH=${LAUNCH//__ZEUSWORKER__/$(shell_quote "$FM_ROOT/bin/fm-zeus-worker.sh")}
     ;;
 esac
 
@@ -1292,6 +1311,64 @@ kimi_spawn_fail() {  # <detail>
   echo "error: $1; inspect window $T" >&2
 }
 
+# Hermes/Zeus: same launch-then-send brief shape as kimi. Interactive
+# `hermes chat` has no verified positional brief; top-level -z is one-shot.
+hermes_capture() {
+  fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
+}
+
+hermes_capture_is_ready() {  # <plain-pane-capture>
+  local pane=$1
+  printf '%s\n' "$pane" | grep -Fq 'Welcome to Hermes Agent!' && return 0
+  # Idle classic-REPL composer: bare ❯ (verified 2026-08-06) or YOLO status line.
+  printf '%s\n' "$pane" | grep -Eq '^[[:space:]]*❯[[:space:]]*$' && return 0
+  printf '%s\n' "$pane" | grep -Fq '⚠ YOLO' && return 0
+  return 1
+}
+
+hermes_wait_for_ready() {
+  local pane i=0 max=${FM_HERMES_READY_POLLS:-60} interval=${FM_HERMES_POLL_INTERVAL:-0.5}
+  while [ "$i" -lt "$max" ]; do
+    pane=$(hermes_capture)
+    hermes_capture_is_ready "$pane" && return 0
+    i=$((i + 1))
+    [ "$i" -ge "$max" ] || sleep "$interval"
+  done
+  return 1
+}
+
+hermes_delivery_is_confirmed() {  # <plain-pane-capture>
+  local pane=$1
+  # Cleared composer after submit, or the brief pointer still visible as a user turn.
+  if printf '%s\n' "$pane" | grep -Fq 'Read the brief at'; then
+    return 0
+  fi
+  if printf '%s\n' "$pane" | grep -Eq '^[[:space:]]*❯[[:space:]]*$' \
+     && printf '%s\n' "$pane" | grep -Fq 'Welcome to Hermes Agent!'; then
+    return 1
+  fi
+  if printf '%s\n' "$pane" | grep -Eq '^[[:space:]]*❯[[:space:]]*$'; then
+    return 0
+  fi
+  return 1
+}
+
+hermes_wait_for_delivery() {
+  local pane i=0 max=${FM_HERMES_DELIVERY_POLLS:-40} interval=${FM_HERMES_POLL_INTERVAL:-0.5}
+  while [ "$i" -lt "$max" ]; do
+    pane=$(hermes_capture)
+    hermes_delivery_is_confirmed "$pane" && return 0
+    i=$((i + 1))
+    [ "$i" -ge "$max" ] || sleep "$interval"
+  done
+  return 1
+}
+
+hermes_spawn_fail() {  # <detail>
+  printf 'failed: %s\n' "$1" >> "$STATE/$ID.status"
+  echo "error: $1; inspect window $T" >&2
+}
+
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   spawn_send_text_line "$WT_TARGET" 'treehouse get'
 
@@ -1397,6 +1474,10 @@ if [ "$KIND" != secondmate ]; then
         echo "error: kimi semantic busy-state wiring is not implemented; open the gate only together with verified wiring" >&2
         exit 1
       fi
+      ;;
+    hermes*|zeus*)
+      # Hermes/Zeus stay unknown until a semantic busy source is live-verified
+      # (bin/fm-busy-lib.sh). Do not arm or invent a rendered busy signature.
       ;;
   esac
   case "$HARNESS" in
@@ -1712,6 +1793,32 @@ if [ "$HARNESS" = kimi ]; then
     exit 1
   fi
 fi
+case "$HARNESS" in
+  hermes|zeus)
+    if ! hermes_wait_for_ready; then
+      hermes_spawn_fail "hermes/zeus did not show a verified ready signal before brief delivery"
+      exit 1
+    fi
+    HERMES_POINTER="Read the brief at $BRIEF_REAL and follow it exactly."
+    HERMES_SUBMIT_RETRIES=${FM_HERMES_SUBMIT_RETRIES:-3}
+    HERMES_SUBMIT_SLEEP=${FM_HERMES_SUBMIT_SLEEP:-${FM_HERMES_POLL_INTERVAL:-0.5}}
+    HERMES_SUBMIT_SETTLE=${FM_HERMES_SUBMIT_SETTLE:-0}
+    HERMES_SUBMIT_VERDICT=$(fm_backend_send_text_submit \
+      "$BACKEND" "$T" "$HERMES_POINTER" "$HERMES_SUBMIT_RETRIES" \
+      "$HERMES_SUBMIT_SLEEP" "$HERMES_SUBMIT_SETTLE" "$W") || {
+      hermes_spawn_fail "hermes/zeus brief pointer could not be submitted"
+      exit 1
+    }
+    if [ "$HERMES_SUBMIT_VERDICT" = send-failed ]; then
+      hermes_spawn_fail "hermes/zeus brief pointer could not be submitted"
+      exit 1
+    fi
+    if ! hermes_wait_for_delivery; then
+      hermes_spawn_fail "hermes/zeus brief pointer delivery was not confirmed"
+      exit 1
+    fi
+    ;;
+esac
 if [ "$KIND" = secondmate ]; then
   if ! fm_config_reread_discard_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then
     if fm_config_reread_quarantine_pending "$PROJ_ABS" "$ID" "$FM_HOME"; then
