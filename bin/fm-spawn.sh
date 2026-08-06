@@ -678,6 +678,13 @@ case "$LAUNCH" in
       echo "error: hermes executable not found on PATH; install Hermes Agent before spawning harness hermes/zeus" >&2
       exit 1
     fi
+    # The crewmate pane does not inherit firstmate's environment, so a key that
+    # is absent HERE is a key fm-zeus-worker.sh will not have either: it would
+    # exit 1 and leave a bare shell behind a "spawned" line. Refuse before launch.
+    if [ -z "${DEEPSEEK_API_KEY:-}" ] && [ -z "${OPENROUTER_API_KEY:-}" ]; then
+      echo "error: harness hermes/zeus needs DEEPSEEK_API_KEY (preferred) or OPENROUTER_API_KEY in firstmate's environment; the worker pane inherits neither otherwise" >&2
+      exit 1
+    fi
     LAUNCH=${LAUNCH//__ZEUSWORKER__/$(shell_quote "$FM_ROOT/bin/fm-zeus-worker.sh")}
     ;;
 esac
@@ -1317,12 +1324,19 @@ hermes_capture() {
   fm_backend_capture "$BACKEND" "$T" 120 "$W" 2>/dev/null || true
 }
 
+hermes_capture_has_empty_composer() {  # <plain-pane-capture>
+  printf '%s\n' "$1" \
+    | grep -Eq '^[[:space:]]*(│|┃|\|)[[:space:]]*❯[[:space:]]*(│|┃|\|)[[:space:]]*$'
+}
+
 hermes_capture_is_ready() {  # <plain-pane-capture>
   local pane=$1
+  # Harness-owned signals only. A bare ❯ row is the default prompt glyph of
+  # several shells, so it would confirm readiness on a pane whose worker already
+  # exited - the brief would then be typed into a dead shell.
   printf '%s\n' "$pane" | grep -Fq 'Welcome to Hermes Agent!' && return 0
-  # Idle classic-REPL composer: bare ❯ (verified 2026-08-06) or YOLO status line.
-  printf '%s\n' "$pane" | grep -Eq '^[[:space:]]*❯[[:space:]]*$' && return 0
   printf '%s\n' "$pane" | grep -Fq '⚠ YOLO' && return 0
+  hermes_capture_has_empty_composer "$pane" && return 0
   return 1
 }
 
@@ -1339,18 +1353,13 @@ hermes_wait_for_ready() {
 
 hermes_delivery_is_confirmed() {  # <plain-pane-capture>
   local pane=$1
-  # Cleared composer after submit, or the brief pointer still visible as a user turn.
-  if printf '%s\n' "$pane" | grep -Fq 'Read the brief at'; then
-    return 0
-  fi
-  if printf '%s\n' "$pane" | grep -Eq '^[[:space:]]*❯[[:space:]]*$' \
-     && printf '%s\n' "$pane" | grep -Fq 'Welcome to Hermes Agent!'; then
-    return 1
-  fi
-  if printf '%s\n' "$pane" | grep -Eq '^[[:space:]]*❯[[:space:]]*$'; then
-    return 0
-  fi
-  return 1
+  # The pointer text alone is not delivery: it reads identically while it still
+  # sits unsubmitted in the composer, and while a dead shell echoes it back. Proof
+  # that the composer actually cleared is the exact `empty` submit verdict the
+  # caller requires; this only adds that the pane is still a Hermes frame and that
+  # the pointer became a turn in it.
+  hermes_capture_is_ready "$pane" || return 1
+  printf '%s\n' "$pane" | grep -Fq 'Read the brief at'
 }
 
 hermes_wait_for_delivery() {
@@ -1752,6 +1761,19 @@ LAUNCH=${LAUNCH//__OPINPUT__/$sq_opinput}
 if [ "$HARNESS" = claude ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
   LAUNCH="CLAUDE_CONFIG_DIR=$(shell_quote "$CLAUDE_CONFIG_DIR") $LAUNCH"
 fi
+# Same daemon-environment gap for the Zeus stack's credentials: forward whichever
+# key firstmate itself resolved onto the launch command so fm-zeus-worker.sh can
+# pick its provider. Scoped to the launched process, never echoed by firstmate.
+case "$HARNESS" in
+  hermes|zeus)
+    if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
+      LAUNCH="DEEPSEEK_API_KEY=$(shell_quote "$DEEPSEEK_API_KEY") $LAUNCH"
+    fi
+    if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+      LAUNCH="OPENROUTER_API_KEY=$(shell_quote "$OPENROUTER_API_KEY") $LAUNCH"
+    fi
+    ;;
+esac
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
   sq_primary_home=$(shell_quote "$FM_HOME")
@@ -1809,8 +1831,10 @@ case "$HARNESS" in
       hermes_spawn_fail "hermes/zeus brief pointer could not be submitted"
       exit 1
     }
-    if [ "$HERMES_SUBMIT_VERDICT" = send-failed ]; then
-      hermes_spawn_fail "hermes/zeus brief pointer could not be submitted"
+    # Exact `empty` is the backend's proof the composer cleared; `pending` means a
+    # swallowed Enter left the pointer sitting unsubmitted in the composer.
+    if [ "$HERMES_SUBMIT_VERDICT" != empty ]; then
+      hermes_spawn_fail "hermes/zeus brief pointer could not be submitted (composer verdict: $HERMES_SUBMIT_VERDICT)"
       exit 1
     fi
     if ! hermes_wait_for_delivery; then

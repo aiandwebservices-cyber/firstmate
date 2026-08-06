@@ -68,6 +68,17 @@ Observed result: file `HERMES_MARKER.txt` with content `MARKER_OK`, agent reply 
 
 Firstmate therefore launches via `bin/fm-zeus-worker.sh` (interactive) and delivers the brief after readiness, like Kimi.
 
+## Readiness, delivery, and credentials
+
+Readiness accepts only harness-owned evidence: `Welcome to Hermes Agent!`, the `⚠ YOLO` footer, or a bordered empty `❯` composer.
+A bare `❯` row is the default prompt glyph of several shells, so it proves nothing about Hermes and is rejected.
+Delivery requires the exact `empty` submit verdict from `fm_tmux_submit_core` together with the pointer visible in a pane that still shows a Hermes signal.
+A `pending` verdict means the Enter was swallowed and the pointer is still in the composer; that fails the spawn.
+
+The crewmate pane is created by a long-lived multiplexer daemon and inherits no captain environment.
+`fm-spawn.sh` therefore refuses a hermes/zeus spawn when neither `DEEPSEEK_API_KEY` nor `OPENROUTER_API_KEY` is set for firstmate, and forwards the resolved key onto the launch command.
+Without that pair of guards, a keyless pane exits `fm-zeus-worker.sh` back to a shell and every gate can pass against that shell.
+
 ## Busy state
 
 No semantic busy source was live-verified for a firstmate-launched Hermes pane on 2026-08-06.
@@ -77,7 +88,8 @@ Do not open a rendered-tail gate without a new evidence pass in this file and `b
 ## Detection
 
 Markerless for firstmate.
-`bin/fm-harness.sh` matches process ancestry command name `hermes` (or `fm-zeus-worker`).
+`bin/fm-harness.sh`, `bin/fm-session-lock-lib.sh`, and `bin/backends/tmux.sh` all match the ancestry command name against `*hermes*`.
+`bin/fm-zeus-worker.sh` `exec`s into `hermes`, so the wrapper's own name is never the live foreground command and is not a match token anywhere.
 
 ## Regression entry points
 

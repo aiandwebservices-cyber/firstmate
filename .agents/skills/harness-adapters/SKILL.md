@@ -417,6 +417,7 @@ Keys stay in the environment (`DEEPSEEK_API_KEY` preferred; `OPENROUTER_API_KEY`
 | Fact | Value |
 |---|---|
 | Binary | `hermes` on `PATH` (local wrapper may unset Buzz `PYTHONHOME` pollution); spawn refuses if missing. |
+| Credentials | Spawn refuses unless firstmate's own environment holds `DEEPSEEK_API_KEY` or `OPENROUTER_API_KEY`, and forwards the key onto the launch command: the crewmate pane inherits no captain environment. |
 | Launch | `bin/fm-zeus-worker.sh` → `hermes chat --yolo --accept-hooks --cli -m <model> --provider <provider>`, then readiness-gated brief pointer delivery. |
 | Default model | `deepseek-v4-flash` / provider `deepseek` when `DEEPSEEK_API_KEY` is set; else OpenRouter `deepseek/deepseek-v4-flash` with one stderr notice. |
 | Busy state | Unknown `hermes-unverified` until a semantic source is live-verified. Do not invent a spinner or footer regex. |
@@ -425,13 +426,15 @@ Keys stay in the environment (`DEEPSEEK_API_KEY` preferred; `OPENROUTER_API_KEY`
 | Skill invocation | `/<skill>`, for example `/no-mistakes`. |
 | Autonomy | `--yolo` (footer shows `⚠ YOLO`); `--accept-hooks` auto-approves config shell hooks. |
 | Trust dialog | None observed on clean `--cli` launch in a temp cwd. |
-| Environment marker | None for firstmate detection; process ancestry command name `hermes` (or `fm-zeus-worker`). Many `HERMES_*` vars exist but none is a stable firstmate agent marker. |
+| Environment marker | None for firstmate detection; process ancestry command name matches `*hermes*`. The worker wrapper `exec`s into `hermes`, so its own name is never the live foreground command and is not matched. Many `HERMES_*` vars exist but none is a stable firstmate agent marker. |
 | Composer | Classic REPL bordered box with agent prompt glyph `❯` (already in `fm-composer-lib.sh`). |
 | Effort | No reasoning-effort flag; requested effort is recorded in meta only. |
 | One-shot vs interactive | Top-level `hermes -z PROMPT` is one-shot and exits after the turn. Supervised workers must use interactive `hermes chat` (not `-z`, not `hermes acp`). |
 | Out of scope | Primary turn-end guard for Hermes-as-primary; Buzz Desktop; `zeus-acp` ACP bridge. |
 
-`fm-spawn.sh` launches Hermes bare (via the Zeus worker), waits for `Welcome to Hermes Agent!`, an idle `❯` composer, or `⚠ YOLO`, sends only `Read the brief at <absolute-path> and follow it exactly.`, and requires a delivery postcondition before accepting the spawn.
+`fm-spawn.sh` launches Hermes bare (via the Zeus worker), waits for `Welcome to Hermes Agent!`, `⚠ YOLO`, or a bordered empty `❯` composer, sends only `Read the brief at <absolute-path> and follow it exactly.`, and requires a delivery postcondition before accepting the spawn.
+Every one of those signals is harness-owned: a bare `❯` row on its own is the default prompt of several shells, so it must never gate readiness or delivery.
+Delivery needs the exact `empty` submit verdict (proof the composer cleared) plus the pointer visible in a still-Hermes pane; a `pending` verdict is a swallowed Enter and fails the spawn.
 This launch-then-send shape is mandatory because interactive `hermes chat` rejects a positional brief and `-z` does not leave a supervised pane.
 File tools write relative to the process cwd; `fm-spawn` starts the pane in the task worktree after `treehouse get`.
 

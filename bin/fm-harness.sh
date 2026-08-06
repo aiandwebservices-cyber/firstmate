@@ -56,7 +56,7 @@ detect_own() {
       *opencode*) echo opencode; return ;;
       *grok*) echo grok; return ;;
       kimi) echo kimi; return ;;
-      hermes|fm-zeus-worker.sh) echo hermes; return ;;
+      *hermes*) echo hermes; return ;;
       pi-signed) echo pi; return ;;
       pi) echo pi; return ;;
       node*|python*)
