@@ -369,6 +369,10 @@ test_spawn_refuses_a_foreign_task_temp_root() {
   case $(find "$planted" -type f -exec cat {} + 2>/dev/null) in
     *ds-secret-value*) fail "a Zeus key was written through the planted symlink" ;;
   esac
+  # The pane and meta already exist by this point, so the fleet must see why the
+  # task has no agent rather than a silent orphan.
+  assert_grep 'failed: refusing to stage Zeus credentials' "$HOME_DIR/state/$id.status" \
+    "the foreign task temp refusal left no supervisor-visible failure"
   rm -f "$task_tmp"
   pass "fm-spawn: Zeus credentials refuse a task temp root this user does not own"
 }

@@ -1781,14 +1781,14 @@ ZEUS_ENV_FILE=
 case "$HARNESS" in
   hermes|zeus)
     if [ -L "$TASK_TMP" ] || [ ! -d "$TASK_TMP" ] || [ ! -O "$TASK_TMP" ]; then
-      echo "error: refusing to stage Zeus credentials: $TASK_TMP is not a directory owned by this user" >&2
+      hermes_spawn_fail "refusing to stage Zeus credentials: $TASK_TMP is not a directory owned by this user"
       exit 1
     fi
     zeus_old_umask=$(umask)
     umask 077
     ZEUS_ENV_FILE=$(mktemp "$TASK_TMP/zeus-env.XXXXXX") || {
       umask "$zeus_old_umask"
-      echo "error: could not create a private file for the Zeus credentials under $TASK_TMP" >&2
+      hermes_spawn_fail "could not create a private file for the Zeus credentials under $TASK_TMP"
       exit 1
     }
     umask "$zeus_old_umask"
