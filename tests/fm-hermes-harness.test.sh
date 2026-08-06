@@ -153,6 +153,20 @@ case "${1:-}" in
       esac
       exit 0
     fi
+    all=$*
+    case "$all" in
+      *"set -a; . '"*)
+        # Read the private credential file exactly as the pane's own shell would,
+        # so the test can assert on what the worker actually receives.
+        zeus_path=${all#*set -a; . \'}
+        zeus_path=${zeus_path%%\'*}
+        if [ -n "${FM_FAKE_ZEUS_ENV_SNAPSHOT:-}" ] && [ -f "$zeus_path" ]; then
+          { stat -c '%a' "$zeus_path" 2>/dev/null || stat -f '%Lp' "$zeus_path"; } \
+            > "$FM_FAKE_ZEUS_ENV_SNAPSHOT.mode"
+          cat "$zeus_path" > "$FM_FAKE_ZEUS_ENV_SNAPSHOT"
+        fi
+        ;;
+    esac
     case " $* " in
       *' Enter '*)
         case "$state" in
@@ -238,6 +252,7 @@ run_spawn() {
     FM_FAKE_LAUNCH_LOG="$case_dir/launch.log" \
     FM_FAKE_POINTER_LOG="$case_dir/pointer.log" \
     FM_FAKE_HERMES_STATE="$case_dir/hermes.state" \
+    FM_FAKE_ZEUS_ENV_SNAPSHOT="$case_dir/zeus-env.snapshot" \
     FM_FAKE_TMUX_CALL_LOG="$case_dir/tmux-calls.log" \
     FM_FAKE_BRIEF_REAL="$(cd "$home/data/$id" && pwd -P)/brief.md" \
     FM_HERMES_READY_POLLS=2 FM_HERMES_DELIVERY_POLLS=2 FM_HERMES_POLL_INTERVAL=0 \
@@ -286,7 +301,7 @@ test_spawn_launches_zeus_worker_with_model_and_no_effort_flag() {
 }
 
 test_spawn_never_types_a_zeus_key_into_the_pane() {
-  local id rec rc typed env_file mode task_tmp
+  local id rec rc typed mode task_tmp snapshot leftover
   id="hermes-secret-z7-$$"
   task_tmp="/tmp/fm-$id"
   rm -rf "$task_tmp"
@@ -307,21 +322,55 @@ test_spawn_never_types_a_zeus_key_into_the_pane() {
     *DEEPSEEK_API_KEY=*|*OPENROUTER_API_KEY=*)
       fail "a Zeus key assignment reached the pane instead of the private env file" ;;
   esac
-  assert_grep "set -a; . '$task_tmp/zeus-env'" "$CASE_DIR/tmux-calls.log" \
+  assert_grep "set -a; . '$task_tmp/zeus-env." "$CASE_DIR/tmux-calls.log" \
     "the pane was never told to source its private Zeus env file"
-  assert_grep "rm -f '$task_tmp/zeus-env'" "$CASE_DIR/tmux-calls.log" \
+  assert_grep "rm -f '$task_tmp/zeus-env." "$CASE_DIR/tmux-calls.log" \
     "the pane was never told to delete its private Zeus env file"
 
-  env_file="$task_tmp/zeus-env"
-  assert_present "$env_file" "the private Zeus env file was not written"
-  mode=$(stat -c '%a' "$env_file" 2>/dev/null || stat -f '%Lp' "$env_file")
+  # What the pane read when it sourced the file.
+  snapshot="$CASE_DIR/zeus-env.snapshot"
+  assert_present "$snapshot" "the private Zeus env file was never readable by the pane"
+  mode=$(cat "$snapshot.mode")
   [ "$mode" = 600 ] || fail "the Zeus env file must be owner-only, got mode $mode"
-  assert_grep "DEEPSEEK_API_KEY='ds-secret-value'" "$env_file" \
+  assert_grep "DEEPSEEK_API_KEY='ds-secret-value'" "$snapshot" \
     "the Zeus env file did not carry the resolved DeepSeek key"
-  assert_grep "OPENROUTER_API_KEY='or-secret-value'" "$env_file" \
+  assert_grep "OPENROUTER_API_KEY='or-secret-value'" "$snapshot" \
     "the Zeus env file did not carry the resolved OpenRouter key"
+
+  # mktemp names the file, so a fixed path can never be pre-planted as a symlink.
+  case $(cat "$CASE_DIR/tmux-calls.log") in
+    *"$task_tmp/zeus-env'"*) fail "the Zeus env file used a predictable fixed name" ;;
+  esac
+  # The EXIT trap owns cleanup, so nothing survives even though the fake pane
+  # never ran the rm the real one would.
+  leftover=$(find "$task_tmp" -maxdepth 1 -name 'zeus-env.*' 2>/dev/null)
+  [ -z "$leftover" ] || fail "a staged Zeus credential file survived the spawn: $leftover"
   rm -rf "$task_tmp"
-  pass "fm-spawn: Zeus keys reach the pane through a 0600 file, never as typed text"
+  pass "fm-spawn: Zeus keys reach the pane through an unguessable 0600 file, never as typed text"
+}
+
+test_spawn_refuses_a_foreign_task_temp_root() {
+  local id rec out rc task_tmp planted
+  id="hermes-symlink-z8-$$"
+  task_tmp="/tmp/fm-$id"
+  rm -rf "$task_tmp"
+  rec=$(make_spawn_case symlink-tmp "$id")
+  read_spawn_record "$rec"
+  # Stand in for a local user who pre-planted the predictable task temp path.
+  planted="$CASE_DIR/planted-tmp"
+  mkdir -p "$planted"
+  ln -s "$planted" "$task_tmp"
+  rc=0
+  out=$(FM_TEST_DEEPSEEK_KEY=ds-secret-value run_spawn \
+    "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus) || rc=$?
+  [ "$rc" -ne 0 ] || fail "a symlinked task temp root must not receive Zeus credentials"
+  assert_contains "$out" "not a directory owned by this user" \
+    "the foreign task temp refusal lacked a concrete reason"
+  case $(find "$planted" -type f -exec cat {} + 2>/dev/null) in
+    *ds-secret-value*) fail "a Zeus key was written through the planted symlink" ;;
+  esac
+  rm -f "$task_tmp"
+  pass "fm-spawn: Zeus credentials refuse a task temp root this user does not own"
 }
 
 test_spawn_records_hermes_harness_name() {
@@ -336,7 +385,7 @@ test_spawn_records_hermes_harness_name() {
   assert_contains "$out" "spawned $id harness=hermes" "hermes spawn did not report its own name"
   launch=$(cat "$CASE_DIR/launch.log")
   assert_contains "$launch" "$ROOT/bin/fm-zeus-worker.sh" "hermes launch did not run the Zeus worker"
-  assert_grep "OPENROUTER_API_KEY='or-test-key'" "/tmp/fm-$id/zeus-env" \
+  assert_grep "OPENROUTER_API_KEY='or-test-key'" "$CASE_DIR/zeus-env.snapshot" \
     "the OpenRouter fallback key did not reach the pane's private env file"
   assert_grep 'harness=hermes' "$HOME_DIR/state/$id.meta" "hermes meta collapsed into zeus"
   rm -rf "/tmp/fm-$id"
@@ -474,6 +523,7 @@ test_worker_openrouter_fallback
 test_worker_model_override
 test_spawn_launches_zeus_worker_with_model_and_no_effort_flag
 test_spawn_never_types_a_zeus_key_into_the_pane
+test_spawn_refuses_a_foreign_task_temp_root
 test_spawn_records_hermes_harness_name
 test_spawn_refuses_without_any_zeus_key
 test_spawn_never_treats_a_shell_prompt_as_ready

@@ -79,8 +79,10 @@ The crewmate pane is created by a long-lived multiplexer daemon and inherits no 
 `fm-spawn.sh` therefore refuses a hermes/zeus spawn when neither `DEEPSEEK_API_KEY` nor `OPENROUTER_API_KEY` is set for firstmate.
 Without that guard, a keyless pane exits `fm-zeus-worker.sh` back to a shell and every gate can pass against that shell.
 
-The resolved key reaches the pane through `$TASK_TMP/zeus-env`, a `0600` file written with `umask 077`.
+The resolved key reaches the pane through a `0600` file that `mktemp` creates as `$TASK_TMP/zeus-env.XXXXXX` under `umask 077`.
+The task temp root is a predictable path in a world-writable `/tmp`, so the spawn first refuses any root that is a symlink or that this user does not own, and `mktemp` then picks an unguessable name and opens the file `O_EXCL`.
 The pane receives one line that sources the file, exports its contents, and deletes it; the launch command carries no key.
+`spawn_abort_cleanup` removes the file on every exit path, so a signal during the readiness wait cannot strand a credential in `/tmp`.
 This matters because everything typed into a pane persists in its scrollback and its shell history file, and `bin/fm-peek.sh` prints raw pane text straight into the captain's context.
 Do not restore an environment-prefix on the launch command: forwarding a path is safe, forwarding a credential is not.
 

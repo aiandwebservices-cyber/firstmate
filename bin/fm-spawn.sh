@@ -345,6 +345,11 @@ spawn_abort_cleanup() {
     CONFIG_INHERIT_LOCK_HELD=0
     fm_lock_release "$CONFIG_INHERIT_LOCK" || true
   fi
+  # A signal during the readiness wait would otherwise strand the staged Zeus
+  # credentials in /tmp. This cannot race the pane: the readiness gate the
+  # success path clears requires a live worker, which requires the already
+  # sourced-and-deleted file.
+  [ -z "${ZEUS_ENV_FILE:-}" ] || rm -f "$ZEUS_ENV_FILE"
   return "$status"
 }
 trap spawn_abort_cleanup EXIT
@@ -1768,13 +1773,24 @@ fi
 # surface (fm-peek, the composer probe's full-history capture). So hand the pane a
 # private per-task file instead and let it source and delete that file: firstmate
 # never renders a secret byte, and no launch command carries one.
+# The task temp root is a predictable name in a world-writable /tmp, so a bare
+# redirect onto a fixed path there would follow a pre-planted symlink and a mode
+# set by whoever created it. Require a directory this user owns, then let mktemp
+# create the file itself: an unpredictable name, opened O_EXCL as a regular file.
 ZEUS_ENV_FILE=
 case "$HARNESS" in
   hermes|zeus)
-    ZEUS_ENV_FILE="$TASK_TMP/zeus-env"
+    if [ -L "$TASK_TMP" ] || [ ! -d "$TASK_TMP" ] || [ ! -O "$TASK_TMP" ]; then
+      echo "error: refusing to stage Zeus credentials: $TASK_TMP is not a directory owned by this user" >&2
+      exit 1
+    fi
     zeus_old_umask=$(umask)
     umask 077
-    : > "$ZEUS_ENV_FILE"
+    ZEUS_ENV_FILE=$(mktemp "$TASK_TMP/zeus-env.XXXXXX") || {
+      umask "$zeus_old_umask"
+      echo "error: could not create a private file for the Zeus credentials under $TASK_TMP" >&2
+      exit 1
+    }
     umask "$zeus_old_umask"
     {
       if [ -n "${DEEPSEEK_API_KEY:-}" ]; then
