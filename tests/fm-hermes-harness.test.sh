@@ -102,7 +102,13 @@ fake_screen() {
       printf 'Welcome to Hermes Agent!\n⚠ YOLO\n╭────────────────────────────────╮\n│ ❯                              │\n╰────────────────────────────────╯\n'
       ;;
     pointer-typed)
-      printf '⚠ YOLO\n╭────────────────────────────────╮\n│ ❯ Read the brief and follow it │\n│                                │\n╰────────────────────────────────╯\n'
+      printf '⚠ YOLO\n╭────────────────────────────────╮\n│ ❯ Read the brief at /b.md and  │\n│                                │\n╰────────────────────────────────╯\n'
+      ;;
+    in-turn)
+      # Hermes accepted the pointer and is running the turn: the composer row is
+      # replaced by the in-turn hint bar until the turn ends, so no empty composer
+      # is ever observable while the worker processes the brief.
+      printf '❯ Read the brief at %s and follow it exactly.\n⚠ YOLO\n⚕ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel\n' "$FM_FAKE_BRIEF_REAL"
       ;;
     delivered)
       printf '❯ Read the brief at %s and follow it exactly.\n⚠ YOLO\n╭────────────────────────────────╮\n│ ❯                              │\n╰────────────────────────────────╯\n' "$FM_FAKE_BRIEF_REAL"
@@ -120,6 +126,7 @@ fake_cursor_y() {
   case "$state" in
     ready|delivered) printf '3\n' ;;
     pointer-typed) printf '3\n' ;;
+    in-turn) printf '2\n' ;;
     shell-prompt) printf '1\n' ;;
     *) printf '1\n' ;;
   esac
@@ -178,6 +185,7 @@ case "${1:-}" in
           pointer-typed)
             case "${FM_FAKE_HERMES_DELIVERY:-yes}" in
               yes) printf 'delivered\n' > "$FM_FAKE_HERMES_STATE" ;;
+              in-turn) printf 'in-turn\n' > "$FM_FAKE_HERMES_STATE" ;;
               swallowed) ;;
               *) printf 'ready\n' > "$FM_FAKE_HERMES_STATE" ;;
             esac
@@ -436,12 +444,30 @@ test_spawn_rejects_a_swallowed_submit() {
   out=$(FM_TEST_DEEPSEEK_KEY=ds-test-key FM_FAKE_HERMES_DELIVERY=swallowed run_spawn \
     "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus) || rc=$?
   [ "$rc" -ne 0 ] || fail "a pointer left unsubmitted in the composer must fail the spawn"
-  assert_contains "$out" "composer verdict: pending" \
-    "swallowed submit did not report the proof-carrying verdict"
-  assert_grep 'failed: hermes/zeus brief pointer could not be submitted' \
+  assert_contains "$out" "hermes/zeus brief pointer delivery was not confirmed" \
+    "swallowed submit did not report the delivery gate's verdict"
+  assert_grep 'failed: hermes/zeus brief pointer delivery was not confirmed' \
     "$HOME_DIR/state/$id.status" \
     "swallowed submit did not leave a supervisor-visible failure"
-  pass "fm-spawn: hermes rejects a swallowed Enter instead of confirming its own echoed text"
+  pass "fm-spawn: hermes rejects a swallowed Enter instead of confirming its own composer text"
+}
+
+test_spawn_accepts_an_in_turn_pane_as_delivered() {
+  local id rec out rc
+  id="hermes-inturn-z9-$$"
+  rec=$(make_spawn_case in-turn "$id")
+  read_spawn_record "$rec"
+  rc=0
+  out=$(FM_TEST_DEEPSEEK_KEY=ds-test-key FM_FAKE_HERMES_DELIVERY=in-turn run_spawn \
+    "$CASE_DIR" "$HOME_DIR" "$PROJ_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$id" zeus) || rc=$?
+  # The composer never reads empty while the turn runs, so the old empty-only
+  # submit gate failed this spawn after the worker had already taken the brief.
+  expect_code 0 "$rc" "a pane already running the turn must not be called a failed submit: $out"
+  assert_contains "$out" "spawned $id harness=zeus" "in-turn hermes spawn did not report success"
+  [ ! -s "$HOME_DIR/state/$id.status" ] \
+    || fail "a delivered brief left a failure in status: $(cat "$HOME_DIR/state/$id.status")"
+  rm -rf "/tmp/fm-$id"
+  pass "fm-spawn: hermes accepts a mid-turn pane whose composer shows the in-turn hint bar"
 }
 
 test_spawn_unconfirmed_delivery_fails_loudly() {
@@ -532,6 +558,7 @@ test_spawn_records_hermes_harness_name
 test_spawn_refuses_without_any_zeus_key
 test_spawn_never_treats_a_shell_prompt_as_ready
 test_spawn_rejects_a_swallowed_submit
+test_spawn_accepts_an_in_turn_pane_as_delivered
 test_spawn_unconfirmed_delivery_fails_loudly
 test_harness_detection_ancestry_hermes
 test_tmux_backend_reads_hermes_pane_alive

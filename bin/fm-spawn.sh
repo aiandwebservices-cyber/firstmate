@@ -1356,15 +1356,23 @@ hermes_wait_for_ready() {
   return 1
 }
 
+# Hermes replaces the composer row with this hint bar for the whole turn, so a
+# mid-turn pane never reads as an empty composer. The token is harness-owned:
+# no shell echo of our own pointer can produce it.
+hermes_capture_is_in_turn() {  # <plain-pane-capture>
+  printf '%s\n' "$1" | grep -Fq 'msg=interrupt'
+}
+
 hermes_delivery_is_confirmed() {  # <plain-pane-capture>
   local pane=$1
   # The pointer text alone is not delivery: it reads identically while it still
   # sits unsubmitted in the composer, and while a dead shell echoes it back. Proof
-  # that the composer actually cleared is the exact `empty` submit verdict the
-  # caller requires; this only adds that the pane is still a Hermes frame and that
-  # the pointer became a turn in it.
-  hermes_capture_is_ready "$pane" || return 1
-  printf '%s\n' "$pane" | grep -Fq 'Read the brief at'
+  # that it became a turn is a Hermes frame that no longer holds it in the
+  # composer - either the composer cleared, or the in-turn hint bar took its place
+  # because the turn is already running on the pointer we sent.
+  printf '%s\n' "$pane" | grep -Fq 'Read the brief at' || return 1
+  hermes_capture_has_empty_composer "$pane" && return 0
+  hermes_capture_is_in_turn "$pane"
 }
 
 hermes_wait_for_delivery() {
@@ -1866,9 +1874,12 @@ case "$HARNESS" in
       hermes_spawn_fail "hermes/zeus brief pointer could not be submitted"
       exit 1
     }
-    # Exact `empty` is the backend's proof the composer cleared; `pending` means a
-    # swallowed Enter left the pointer sitting unsubmitted in the composer.
-    if [ "$HERMES_SUBMIT_VERDICT" != empty ]; then
+    # Only `send-failed` proves nothing was typed. A short retry budget cannot
+    # distinguish a swallowed Enter from an accepted one: Hermes shows its in-turn
+    # hint bar - not an empty composer - for the whole turn the pointer started, so
+    # requiring `empty` here would fail a spawn that already delivered. The
+    # delivery gate below carries that proof instead.
+    if [ "$HERMES_SUBMIT_VERDICT" = send-failed ]; then
       hermes_spawn_fail "hermes/zeus brief pointer could not be submitted (composer verdict: $HERMES_SUBMIT_VERDICT)"
       exit 1
     fi

@@ -72,8 +72,8 @@ Firstmate therefore launches via `bin/fm-zeus-worker.sh` (interactive) and deliv
 
 Readiness accepts only harness-owned evidence: `Welcome to Hermes Agent!`, the `⚠ YOLO` footer, or a bordered empty `❯` composer.
 A bare `❯` row is the default prompt glyph of several shells, so it proves nothing about Hermes and is rejected.
-Delivery requires the exact `empty` submit verdict from `fm_tmux_submit_core` together with the pointer visible in a pane that still shows a Hermes signal.
-A `pending` verdict means the Enter was swallowed and the pointer is still in the composer; that fails the spawn.
+Delivery requires the pointer visible in a pane whose composer no longer holds it: either a bordered empty `❯` composer, or the in-turn hint bar `⚕ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel`.
+Hermes shows that hint bar instead of an empty composer for the whole turn the pointer starts, so only `send-failed` fails the submit itself; a swallowed Enter leaves the pointer in the composer and fails the delivery gate.
 
 The crewmate pane is created by a long-lived multiplexer daemon and inherits no captain environment.
 `fm-spawn.sh` therefore refuses a hermes/zeus spawn when neither `DEEPSEEK_API_KEY` nor `OPENROUTER_API_KEY` is set for firstmate.
