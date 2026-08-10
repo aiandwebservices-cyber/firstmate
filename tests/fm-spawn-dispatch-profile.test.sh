@@ -727,6 +727,57 @@ test_role_rejected_with_secondmate_spawn() {
   pass "fm-spawn rejects --role on secondmate spawns"
 }
 
+test_role_kind_contradiction_rejected_on_scout_spawn() {
+  local rec id out status
+  id=profile-role-scout-builder-z21
+  rec=$(make_spawn_case profile-role-scout-builder claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --role builder)
+  status=$?
+  expect_code 1 "$status" "scout spawn with builder role must be rejected"
+  assert_contains "$out" "role 'builder' does not allow kind 'scout'" \
+    "scout+builder spawn rejection must name the conflict"
+  assert_absent "$HOME_DIR/state/$id.meta" "rejected scout+builder must not write meta"
+  pass "fm-spawn rejects a builder role on a scout spawn"
+}
+
+test_role_kind_contradiction_rejected_on_ship_spawn() {
+  local rec id out status
+  id=profile-role-ship-researcher-z22
+  rec=$(make_spawn_case profile-role-ship-researcher claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --role researcher)
+  status=$?
+  expect_code 1 "$status" "ship spawn with researcher role must be rejected"
+  assert_contains "$out" "role 'researcher' does not allow kind 'ship'" \
+    "ship+researcher spawn rejection must name the conflict"
+  assert_absent "$HOME_DIR/state/$id.meta" "rejected ship+researcher must not write meta"
+  pass "fm-spawn rejects a researcher role on a ship spawn"
+}
+
+test_role_kind_dual_accepted_on_both_kinds() {
+  local rec id out status
+  id=profile-role-debugger-scout-z23
+  rec=$(make_spawn_case profile-role-debugger-scout claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --scout --role debugger)
+  status=$?
+  expect_code 0 "$status" "scout spawn with dual-kind debugger role should succeed"
+  assert_grep "role=debugger" "$HOME_DIR/state/$id.meta" "meta missing role=debugger"
+
+  id=profile-role-tester-ship-z24
+  rec=$(make_spawn_case profile-role-tester-ship claude "$id")
+  read_case_record "$rec"
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --role tester)
+  status=$?
+  expect_code 0 "$status" "ship spawn with dual-kind tester role should succeed"
+  assert_grep "role=tester" "$HOME_DIR/state/$id.meta" "meta missing role=tester"
+  pass "fm-spawn accepts dual-kind roles on either deliverable kind"
+}
+
 test_no_profile_keeps_claude_profile_defaults
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
@@ -757,5 +808,8 @@ test_role_records_meta_and_reports_on_spawn_line
 test_role_defaults_to_default_in_meta_without_flag
 test_role_unknown_role_refuses_before_endpoint_or_metadata
 test_role_rejected_with_secondmate_spawn
+test_role_kind_contradiction_rejected_on_scout_spawn
+test_role_kind_contradiction_rejected_on_ship_spawn
+test_role_kind_dual_accepted_on_both_kinds
 
 echo "# all fm-spawn-dispatch-profile tests passed"

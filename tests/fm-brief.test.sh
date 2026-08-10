@@ -612,6 +612,45 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# --role must reject a role-kind contradiction (a Builder contract in a scout
+# brief, or a Researcher contract in a ship brief) and must accept the dual-kind
+# roles on either side.
+test_role_kind_consistency_enforced() {
+  local home status=0 err
+  home="$TMP_ROOT/role-kind-home"
+  mkdir -p "$home/data"
+  err="$home/kind.err"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" kind-scout-builder firstmate --scout --role builder >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "scout brief with builder role must be rejected"
+  assert_grep "role 'builder' does not allow kind 'scout'" "$err" \
+    "scout+builder rejection must name the conflict"
+  assert_absent "$home/data/kind-scout-builder/brief.md" \
+    "rejected scout+builder must not write a brief"
+
+  status=0
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" kind-ship-researcher firstmate --role researcher >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "ship brief with researcher role must be rejected"
+  assert_grep "role 'researcher' does not allow kind 'ship'" "$err" \
+    "ship+researcher rejection must name the conflict"
+  assert_absent "$home/data/kind-ship-researcher/brief.md" \
+    "rejected ship+researcher must not write a brief"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" kind-ship-builder firstmate --role builder >/dev/null 2>&1 \
+    || fail "ship brief with builder role should succeed"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" kind-scout-researcher firstmate --scout --role researcher >/dev/null 2>&1 \
+    || fail "scout brief with researcher role should succeed"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" kind-scout-debugger firstmate --scout --role debugger >/dev/null 2>&1 \
+    || fail "scout brief with dual-kind debugger role should succeed"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" kind-ship-tester firstmate --role tester >/dev/null 2>&1 \
+    || fail "ship brief with dual-kind tester role should succeed"
+  for id in kind-ship-builder kind-scout-researcher kind-scout-debugger kind-ship-tester; do
+    assert_no_grep "^kinds:" "$home/data/$id/brief.md" \
+      "$id brief must not leak the machine-readable kinds line into the contract"
+  done
+  pass "fm-brief.sh: role-kind consistency is enforced and the kinds line stays out of briefs"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -722,4 +761,5 @@ test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
 test_role_injects_contract_into_ship_and_scout
+test_role_kind_consistency_enforced
 test_role_rejects_unknown_secondmate_and_missing_value

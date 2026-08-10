@@ -144,10 +144,14 @@ if [ "$ROLE_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
   exit 1
 fi
 
-# The role catalog is the single owner of role names and contracts
-# (.agents/skills/agent-roles/roles/<name>.md under this repo's root; the
-# agent-roles skill owns classification). An unknown role fails loudly here so
-# an unlabeled brief cannot be scaffolded by a typo.
+# The role catalog is the single owner of role names, contracts, and allowed
+# kinds (.agents/skills/agent-roles/roles/<name>.md under this repo's root; the
+# agent-roles skill owns classification). Each role file opens with a
+# machine-readable "kinds: <scout|ship|scout|ship>" line that both fm-brief and
+# fm-spawn validate against the requested kind, so a contradiction like a
+# Builder contract inside a report-only scout brief fails loudly instead of
+# reaching a confused worker. An unknown role fails loudly here so an unlabeled
+# brief cannot be scaffolded by a typo.
 ROLE_SECTION=
 if [ "$ROLE_SET" -eq 1 ]; then
   [ -n "$ROLE" ] || { echo "error: --role requires a non-empty value" >&2; exit 1; }
@@ -156,10 +160,28 @@ if [ "$ROLE_SET" -eq 1 ]; then
     echo "error: unknown role '$ROLE' (no contract at .agents/skills/agent-roles/roles/$ROLE.md)" >&2
     exit 1
   fi
-  # read -r -d '' preserves the contract's trailing newline that a $(...)
-  # substitution would strip; the leading and trailing newlines keep the
-  # injected section cleanly separated whether or not it is present.
-  IFS= read -r -d '' ROLE_SECTION < "$ROLE_CONTRACT" || true
+  ROLE_KINDS=$(sed -n '1s/^kinds: //p' "$ROLE_CONTRACT")
+  if [ -z "$ROLE_KINDS" ]; then
+    echo "error: role '$ROLE' contract is missing its kinds line (kinds: <scout|ship>)" >&2
+    exit 1
+  fi
+  # kinds is a |-separated list ("scout", "ship", or "scout|ship"); split it and
+  # match the requested kind as a whole token so "scout|ship" admits both.
+  ROLE_KIND_OK=0
+  IFS='|' read -r -a ROLE_KIND_LIST <<EOF
+$ROLE_KINDS
+EOF
+  for allowed in "${ROLE_KIND_LIST[@]}"; do
+    [ "$allowed" = "$KIND" ] && ROLE_KIND_OK=1
+  done
+  if [ "$ROLE_KIND_OK" -eq 0 ]; then
+    echo "error: role '$ROLE' does not allow kind '$KIND' (kinds: $ROLE_KINDS)" >&2
+    exit 1
+  fi
+  # The first two lines are the machine-readable kinds line and its trailing
+  # blank; drop them so the worker's brief carries only the prose contract.
+  # $(tail ...) is not a heredoc, so it is safe under the Bash 3.2 parse guard.
+  ROLE_SECTION=$(tail -n +3 "$ROLE_CONTRACT")
   ROLE_SECTION="
 # Role
 

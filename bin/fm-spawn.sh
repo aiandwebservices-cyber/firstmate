@@ -243,12 +243,38 @@ case "$EFFORT" in
   *) echo "error: --effort must be one of low, medium, high, xhigh, max" >&2; exit 1 ;;
 esac
 
+if [ "$ROLE_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
+  echo "error: --role does not apply to --secondmate spawns" >&2
+  exit 1
+fi
+
 # Role catalog validation: the agent-roles skill owns the catalog and
-# classification; the contract files are the single owner of valid names. An
-# unknown role fails loudly so a typo cannot spawn an unlabeled crewmate.
+# classification; the contract files are the single owner of valid names and
+# allowed kinds (their first line is "kinds: <scout|ship|scout|ship>"). An
+# unknown role or a role-kind contradiction (e.g. a Builder contract on a scout
+# spawn) fails loudly so a typo cannot spawn an unlabeled or self-contradicting
+# crewmate.
 if [ "$ROLE_SET" -eq 1 ]; then
   if [ ! -f "$FM_ROOT/.agents/skills/agent-roles/roles/$ROLE.md" ]; then
     echo "error: unknown role '$ROLE' (no contract at .agents/skills/agent-roles/roles/$ROLE.md)" >&2
+    exit 1
+  fi
+  ROLE_KINDS=$(sed -n '1s/^kinds: //p' "$FM_ROOT/.agents/skills/agent-roles/roles/$ROLE.md")
+  if [ -z "$ROLE_KINDS" ]; then
+    echo "error: role '$ROLE' contract is missing its kinds line (kinds: <scout|ship>)" >&2
+    exit 1
+  fi
+  # kinds is a |-separated list ("scout", "ship", or "scout|ship"); split it and
+  # match the requested kind as a whole token so "scout|ship" admits both.
+  ROLE_KIND_OK=0
+  IFS='|' read -r -a ROLE_KIND_LIST <<EOF
+$ROLE_KINDS
+EOF
+  for allowed in "${ROLE_KIND_LIST[@]}"; do
+    [ "$allowed" = "$KIND" ] && ROLE_KIND_OK=1
+  done
+  if [ "$ROLE_KIND_OK" -eq 0 ]; then
+    echo "error: role '$ROLE' does not allow kind '$KIND' (kinds: $ROLE_KINDS)" >&2
     exit 1
   fi
 fi
@@ -269,10 +295,6 @@ fm_backend_validate_spawn "$BACKEND" || exit 1
 fm_backend_source "$BACKEND" || exit 1
 if [ "$BACKEND" = orca ] && [ "$KIND" = secondmate ]; then
   echo "error: backend=orca does not support --secondmate spawns yet" >&2
-  exit 1
-fi
-if [ "$ROLE_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
-  echo "error: --role does not apply to --secondmate spawns" >&2
   exit 1
 fi
 if [ "$BACKEND" = cmux ] && [ "$KIND" = secondmate ]; then
