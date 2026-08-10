@@ -632,6 +632,78 @@ test_scout_and_secondmate_scaffold() {
   pass "fm-brief: scout and secondmate code paths still scaffold well-formed briefs"
 }
 
+# --role injects the catalog contract into ship and scout briefs as a # Role
+# section after the crewmate intro, and leaves the default scaffold unchanged.
+test_role_injects_contract_into_ship_and_scout() {
+  local home ship scout default
+  home="$TMP_ROOT/role-inject-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" role-ship firstmate --role builder >/dev/null 2>&1 \
+    || fail "fm-brief.sh ship --role builder exited non-zero"
+  ship="$home/data/role-ship/brief.md"
+  assert_grep "# Role" "$ship" "ship --role brief missing the # Role section"
+  assert_grep "You are the Builder." "$ship" "ship --role brief missing the injected builder contract"
+  assert_grep "Do not redesign architecture or expand scope." "$ship" \
+    "ship --role brief missing builder constraints"
+  assert_grep "# Task" "$ship" "ship --role brief must still carry # Task after the role section"
+  assert_grep "{TASK}" "$ship" "ship --role brief must still carry the {TASK} placeholder"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" role-scout firstmate --scout --role researcher >/dev/null 2>&1 \
+    || fail "fm-brief.sh scout --role researcher exited non-zero"
+  scout="$home/data/role-scout/brief.md"
+  assert_grep "# Role" "$scout" "scout --role brief missing the # Role section"
+  assert_grep "You are the Researcher" "$scout" "scout --role brief missing the injected researcher contract"
+  assert_grep "Pure scout: the report is the only deliverable." "$scout" \
+    "scout --role brief missing researcher scout constraints"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" role-none firstmate >/dev/null 2>&1 \
+    || fail "fm-brief.sh default ship scaffold exited non-zero"
+  default="$home/data/role-none/brief.md"
+  assert_no_grep "# Role" "$default" "default brief must not gain a role section without --role"
+  pass "fm-brief.sh: --role injects the catalog contract into ship and scout briefs"
+}
+
+# --role must fail loudly for an unknown role, for --secondmate charters, and
+# for a missing value, and must never write a brief on rejection.
+test_role_rejects_unknown_secondmate_and_missing_value() {
+  local home status=0 err
+  home="$TMP_ROOT/role-reject-home"
+  mkdir -p "$home/data"
+  err="$home/role.err"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" role-unknown firstmate --role nonexistent-role >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "unknown --role must be rejected"
+  assert_grep "unknown role 'nonexistent-role'" "$err" \
+    "unknown role rejection must name the offending role"
+  assert_absent "$home/data/role-unknown/brief.md" \
+    "rejected unknown role must not write a brief"
+
+  status=0
+  FM_HOME="$home" FM_SECONDMATE_CHARTER=x \
+    "$ROOT/bin/fm-brief.sh" role-sm --secondmate firstmate --role builder >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "--role with --secondmate must be rejected"
+  assert_grep "does not apply to --secondmate" "$err" \
+    "secondmate --role rejection must state the conflict"
+  assert_absent "$home/data/role-sm/brief.md" \
+    "rejected secondmate --role must not write a brief"
+
+  status=0
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" role-empty firstmate --role= >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "empty --role value must be rejected"
+  assert_grep "--role requires a non-empty value" "$err" \
+    "empty --role value must fail loudly"
+  assert_absent "$home/data/role-empty/brief.md" \
+    "rejected empty --role must not write a brief"
+
+  status=0
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" role-missing firstmate --role >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "missing --role value must be rejected"
+  assert_grep "--role requires a value" "$err" \
+    "missing --role value must fail loudly"
+  pass "fm-brief.sh: --role rejects unknown roles, secondmate charters, and missing values"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -649,3 +721,5 @@ test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
 test_scout_and_secondmate_scaffold
+test_role_injects_contract_into_ship_and_scout
+test_role_rejects_unknown_secondmate_and_missing_value

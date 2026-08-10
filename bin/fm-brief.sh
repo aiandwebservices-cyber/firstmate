@@ -6,10 +6,16 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--role <name>] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
+#   --role <name> injects the named role contract (agent-roles catalog under
+#   .agents/skills/agent-roles/roles/<name>.md) as a # Role section after the
+#   crewmate intro. It applies to ship and scout briefs; it is rejected with
+#   --secondmate because a secondmate is a persistent domain, not a task role.
+#   The role name is validated against that catalog, so an unknown role fails
+#   loudly rather than silently scaffolding an unlabeled brief.
 #   --secondmate writes a persistent secondmate charter. The project list
 #   is cloned into the secondmate home, while the natural-language scope
 #   tells the main firstmate when to route work there; routine churn stays in its own home;
@@ -94,16 +100,33 @@ fi
 KIND=ship
 HERDR_LAB=0
 NO_PROJECTS=0
+ROLE=
+ROLE_SET=0
 POS=()
+want_value=
 for a in "$@"; do
+  if [ -n "$want_value" ]; then
+    case "$a" in
+      --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
+    esac
+    case "$want_value" in
+      role) ROLE=$a; ROLE_SET=1 ;;
+      *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
+    esac
+    want_value=
+    continue
+  fi
   case "$a" in
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
+    --role) want_value=role ;;
+    --role=*) ROLE=${a#--role=}; ROLE_SET=1 ;;
     --herdr-lab) HERDR_LAB=1 ;;
     --no-projects) NO_PROJECTS=1 ;;
     *) POS+=("$a") ;;
   esac
 done
+[ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
 ID=${POS[0]}
 
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
@@ -114,6 +137,33 @@ fi
 if [ "$NO_PROJECTS" -eq 1 ] && [ "$KIND" != secondmate ]; then
   echo "error: --no-projects applies only to --secondmate charters" >&2
   exit 1
+fi
+
+if [ "$ROLE_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
+  echo "error: --role does not apply to --secondmate charters" >&2
+  exit 1
+fi
+
+# The role catalog is the single owner of role names and contracts
+# (.agents/skills/agent-roles/roles/<name>.md under this repo's root; the
+# agent-roles skill owns classification). An unknown role fails loudly here so
+# an unlabeled brief cannot be scaffolded by a typo.
+ROLE_SECTION=
+if [ "$ROLE_SET" -eq 1 ]; then
+  [ -n "$ROLE" ] || { echo "error: --role requires a non-empty value" >&2; exit 1; }
+  ROLE_CONTRACT="$FM_ROOT/.agents/skills/agent-roles/roles/$ROLE.md"
+  if [ ! -f "$ROLE_CONTRACT" ]; then
+    echo "error: unknown role '$ROLE' (no contract at .agents/skills/agent-roles/roles/$ROLE.md)" >&2
+    exit 1
+  fi
+  # read -r -d '' preserves the contract's trailing newline that a $(...)
+  # substitution would strip; the leading and trailing newlines keep the
+  # injected section cleanly separated whether or not it is present.
+  IFS= read -r -d '' ROLE_SECTION < "$ROLE_CONTRACT" || true
+  ROLE_SECTION="
+# Role
+
+$ROLE_SECTION"
 fi
 
 BRIEF="$DATA/$ID/brief.md"
@@ -250,7 +300,7 @@ fi
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
-
+$ROLE_SECTION
 # Task
 {TASK}
 
@@ -359,7 +409,7 @@ DOD=${DOD%$'\n'}
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
-
+$ROLE_SECTION
 # Task
 {TASK}
 

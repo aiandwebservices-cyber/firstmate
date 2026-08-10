@@ -108,6 +108,46 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/agent-roles/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/architect.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/assistant.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/builder.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/debugger.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/designer.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/planner.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/researcher.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/reviewer.md",
+      "audience": "agent-runtime"
+    },
+    {
+      "path": ".agents/skills/agent-roles/roles/tester.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": ".agents/skills/ahoy/SKILL.md",
       "audience": "agent-runtime"
     },
