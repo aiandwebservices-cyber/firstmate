@@ -17,27 +17,35 @@ It is not a second orchestration runtime, control plane, or rename of existing r
 
 ## Stage table
 
-| Stage | Human/agent | Firstmate mechanism |
-| --- | --- | --- |
-| Goal | Captain | Intake, backlog item, acceptance criteria |
-| PRD / investigation | Scout when needed | `scout` → `data/<id>/report.md`; promote via `fm-promote` |
-| Architecture | Scout when multi-subsystem/greenfield | Report + constraints in ship brief |
-| Implementation | Agents | Ship crewmate, isolated worktree, `fm-spawn` |
-| Human review | Captain / configured authority | `needs-decision`, ask-user, **merge authority** |
-| Testing & eval | Agents + forge | `no-mistakes` when rigor selected; CI; PR-CI guardians |
-| Land / deploy | Merge authority + platform | `fm-pr-merge` / local merge after approval; deploy is platform (e.g. Vercel), not a firstmate universal auto-deploy |
-| Monitoring | Firstmate + optional project checks | Watcher, merge poll, guardians; prod APM only if project registers it |
-| Continuous iteration | Fleet | Backlog re-eval, open-work, interrupt-resume, secondmates |
+Every stage is served by a firstmate agent role from the [`agent-roles` catalog](../.agents/skills/agent-roles/SKILL.md) (single owner of role definitions and classification).
+Roles are a labeling axis on top of the ship/scout kind axis, never a new worker class.
+
+| Stage | Role | Human/agent | Firstmate mechanism |
+| --- | --- | --- | --- |
+| Goal | Assistant / Planner | Captain | Intake, backlog item, acceptance criteria |
+| PRD / investigation | Researcher | Scout when needed | `scout` → `data/<id>/report.md`; promote via `fm-promote` |
+| Architecture | Architect | Scout when multi-subsystem/greenfield | Report + constraints in ship brief |
+| Implementation | Builder | Agents | Ship crewmate, isolated worktree, `fm-spawn` |
+| Human review | Reviewer | Captain / configured authority | `needs-decision`, ask-user, **merge authority** |
+| Testing & eval | Tester | Agents + forge | `no-mistakes` when rigor selected; CI; PR-CI guardians |
+| Land / deploy | - | Merge authority + platform | `fm-pr-merge` / local merge after approval; deploy is platform (e.g. Vercel), not a firstmate universal auto-deploy |
+| Monitoring | - | Firstmate + optional project checks | Watcher, merge poll, guardians; prod APM only if project registers it |
+| Continuous iteration | - | Fleet | Backlog re-eval, open-work, interrupt-resume, secondmates |
+
+Defect work (a bug report, test failure, regression, or performance issue) takes the Debugger role by default, scout until a fix is authorized.
+A separate Reviewer or Tester deliverable exists only when the captain explicitly requests it; it never stacks on the selected delivery path's own gate.
+Assistant answers simple questions inline without spawning a worker.
+The role is recorded in the task's meta via `fm-spawn.sh --role` and carried into the brief via `fm-brief.sh --role`, so the worker's contract matches its stage.
 
 ## Default path
 
 ```text
-Goal
-  → [scout if uncertain]
-  → Ship
+Goal (Assistant / Planner)
+  → [scout if uncertain: Researcher → Architect → Designer]
+  → Ship (Builder)
   → human decisions (when required)
-  → automated checks
-  → green PR
+  → automated checks (Tester)
+  → green PR (Reviewer when the captain requests it)
   → captain merge (or standing yolo for green routine merges)
   → platform deploy (project-owned)
   → supervise / loop
@@ -51,10 +59,10 @@ Keep bounded research inside the ship unless a scout rule below fires.
 These cases are binding:
 
 - Unresolved uncertainty could change whether or what to build.
-- Multi-subsystem or greenfield architecture needs a design boundary before implementation.
-- The captain explicitly asks for investigation, design, or a report only.
+- Multi-subsystem or greenfield architecture needs a design boundary before implementation (Architect role).
+- The captain explicitly asks for investigation, design, or a report only (Researcher / Planner / Architect / Designer roles).
 
-Otherwise ship is the default.
+Otherwise ship is the default (Builder role).
 Do not open a parallel design-only scout when established evidence already answers the question and implementation intent is clear.
 A scout report may recommend implementation.
 It does not authorize it.
@@ -105,11 +113,12 @@ ADLC does not add:
 
 - A second control plane, workflow engine, or parallel task state machine.
 - Universal auto-deploy or auto-prod patch without captain and platform ownership.
-- Marketing renames of crewmates, scouts, or secondmates.
+- A rename of crewmates, scouts, or secondmates; agent roles label the work within those existing kinds, they never replace them.
 - A restatement of full section 7 or section 8 contracts (point there instead).
 
 ## Where this applies
 
-Apply ADLC at intake when classifying ship vs scout, when deciding whether scout is required, and when explaining outcomes to the captain in plain language.
-Keep operator-facing wording on project outcomes (investigation, fix, PR, merge, blocker), not internal stage marketing labels.
+Apply ADLC at intake when classifying ship vs scout, when deciding whether scout is required, when assigning the task's agent role, and when explaining outcomes to the captain in plain language.
+Role assignment is automatic: load the `agent-roles` skill, pick the role that names the work, and pass it through `fm-brief.sh --role` and `fm-spawn.sh --role`.
+Keep operator-facing wording on project outcomes (investigation, plan, design, fix, PR, merge, blocker), not internal stage marketing labels.
 Cross-reference this doc; do not copy the stage table into `AGENTS.md` or briefs.

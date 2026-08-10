@@ -667,6 +667,66 @@ test_active_dispatch_profile_does_not_block_secondmate_launch() {
   pass "active crew-dispatch profile does not block secondmate launches"
 }
 
+test_role_records_meta_and_reports_on_spawn_line() {
+  local rec id out status
+  id=profile-role-z17
+  rec=$(make_spawn_case profile-role claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --role builder)
+  status=$?
+  expect_code 0 "$status" "spawn with --role builder should succeed"
+  assert_contains "$out" "spawned $id harness=claude" "spawn did not report claude harness"
+  assert_contains "$out" "role=builder" "spawn line did not report the assigned role"
+  assert_grep "role=builder" "$HOME_DIR/state/$id.meta" "meta missing role=builder"
+  pass "fm-spawn records --role in meta and on the spawn line"
+}
+
+test_role_defaults_to_default_in_meta_without_flag() {
+  local rec id out status
+  id=profile-role-none-z18
+  rec=$(make_spawn_case profile-role-none claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "spawn without --role should succeed"
+  assert_grep "role=default" "$HOME_DIR/state/$id.meta" "meta missing role=default"
+  assert_not_contains "$out" " role=" "spawn line must not report a role when none was assigned"
+  pass "fm-spawn records role=default when no --role is passed"
+}
+
+test_role_unknown_role_refuses_before_endpoint_or_metadata() {
+  local rec id out status
+  id=profile-role-unknown-z19
+  rec=$(make_spawn_case profile-role-unknown claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" --role none-role)
+  status=$?
+  expect_code 1 "$status" "unknown --role must be rejected"
+  assert_contains "$out" "unknown role 'none-role'" "unknown role rejection must name the role"
+  assert_absent "$HOME_DIR/state/$id.meta" "rejected unknown role must not write meta"
+  pass "fm-spawn rejects unknown roles before creating an endpoint or metadata"
+}
+
+test_role_rejected_with_secondmate_spawn() {
+  local rec id sm out status
+  id=profile-role-secondmate-z20
+  rec=$(make_spawn_case profile-role-secondmate codex "$id")
+  read_case_record "$rec"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$sm" --secondmate --role builder)
+  status=$?
+  expect_code 1 "$status" "--role with --secondmate must be rejected"
+  assert_contains "$out" "--role does not apply to --secondmate" \
+    "secondmate --role rejection must state the conflict"
+  assert_absent "$HOME_DIR/state/$id.meta" "rejected secondmate --role must not write meta"
+  pass "fm-spawn rejects --role on secondmate spawns"
+}
+
 test_no_profile_keeps_claude_profile_defaults
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
@@ -693,5 +753,9 @@ test_claude_forwards_firstmate_config_dir_when_set
 test_claude_omits_config_dir_prefix_when_unset
 test_non_claude_harness_ignores_config_dir
 test_active_dispatch_profile_does_not_block_secondmate_launch
+test_role_records_meta_and_reports_on_spawn_line
+test_role_defaults_to_default_in_meta_without_flag
+test_role_unknown_role_refuses_before_endpoint_or_metadata
+test_role_rejected_with_secondmate_spawn
 
 echo "# all fm-spawn-dispatch-profile tests passed"
