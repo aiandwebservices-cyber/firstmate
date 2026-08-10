@@ -66,7 +66,7 @@ Otherwise ship is the default (Builder role).
 Do not open a parallel design-only scout when established evidence already answers the question and implementation intent is clear.
 A scout report may recommend implementation.
 It does not authorize it.
-Promote with `fm-promote` when the captain authorizes the ship.
+Promote with `fm-promote` when the captain authorizes the ship; promotion flips the recorded role to Builder (the Implementation stage role) and firstmate steers any captain-authorized specialized role in the follow-up message.
 
 ## Delivery mode is rigor, not a different lifecycle
 
