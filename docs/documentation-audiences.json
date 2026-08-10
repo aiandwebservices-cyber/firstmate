@@ -192,6 +192,10 @@
       "audience": "public-product"
     },
     {
+      "path": "docs/adlc-standard.md",
+      "audience": "maintainer-architecture"
+    },
+    {
       "path": "docs/architecture.md",
       "audience": "maintainer-architecture"
     },
