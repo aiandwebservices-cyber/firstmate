@@ -96,6 +96,9 @@
 #   against the agent-roles catalog (.agents/skills/agent-roles/roles/<name>.md);
 #   the role is a labeling axis for the crewmate's brief contract, independent of
 #   kind, and --role is rejected for --secondmate spawns.
+#   --specialist <name> records specialist=<name> in meta (wshobson/agents specialist
+#   resolved by bin/fm-specialist-resolve.sh). Rejected for --secondmate. Does not
+#   replace --role; pair with a brief that already injected the specialist contract.
 #   Before a secondmate launch, the home is locally fast-forwarded to the primary
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
@@ -192,11 +195,13 @@ HARNESS_ARG=
 MODEL=
 EFFORT=
 ROLE=
+SPECIALIST=
 BACKEND_ARG=
 HARNESS_SET=0
 MODEL_SET=0
 EFFORT_SET=0
 ROLE_SET=0
+SPECIALIST_SET=0
 BACKEND_SET=0
 POS=()
 want_value=
@@ -210,6 +215,7 @@ for a in "$@"; do
       model) MODEL=$a; MODEL_SET=1 ;;
       effort) EFFORT=$a; EFFORT_SET=1 ;;
       role) ROLE=$a; ROLE_SET=1 ;;
+      specialist) SPECIALIST=$a; SPECIALIST_SET=1 ;;
       backend) BACKEND_ARG=$a; BACKEND_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
@@ -227,6 +233,8 @@ for a in "$@"; do
     --effort=*) EFFORT=${a#--effort=}; EFFORT_SET=1 ;;
     --role) want_value=role ;;
     --role=*) ROLE=${a#--role=}; ROLE_SET=1 ;;
+    --specialist) want_value=specialist ;;
+    --specialist=*) SPECIALIST=${a#--specialist=}; SPECIALIST_SET=1 ;;
     --backend) want_value=backend ;;
     --backend=*) BACKEND_ARG=${a#--backend=}; BACKEND_SET=1 ;;
     *) POS+=("$a") ;;
@@ -237,6 +245,7 @@ done
 [ "$MODEL_SET" -eq 0 ] || [ -n "$MODEL" ] || { echo "error: --model requires a non-empty value" >&2; exit 1; }
 [ "$EFFORT_SET" -eq 0 ] || [ -n "$EFFORT" ] || { echo "error: --effort requires a non-empty value" >&2; exit 1; }
 [ "$ROLE_SET" -eq 0 ] || [ -n "$ROLE" ] || { echo "error: --role requires a non-empty value" >&2; exit 1; }
+[ "$SPECIALIST_SET" -eq 0 ] || [ -n "$SPECIALIST" ] || { echo "error: --specialist requires a non-empty value" >&2; exit 1; }
 [ "$BACKEND_SET" -eq 0 ] || [ -n "$BACKEND_ARG" ] || { echo "error: --backend requires a non-empty value" >&2; exit 1; }
 case "$EFFORT" in
   ''|low|medium|high|xhigh|max) ;;
@@ -245,6 +254,11 @@ esac
 
 if [ "$ROLE_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
   echo "error: --role does not apply to --secondmate spawns" >&2
+  exit 1
+fi
+
+if [ "$SPECIALIST_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
+  echo "error: --specialist does not apply to --secondmate spawns" >&2
   exit 1
 fi
 
@@ -277,6 +291,10 @@ EOF
     echo "error: role '$ROLE' does not allow kind '$KIND' (kinds: $ROLE_KINDS)" >&2
     exit 1
   fi
+fi
+
+if [ "$SPECIALIST_SET" -eq 1 ]; then
+  "$FM_ROOT/bin/fm-specialist-resolve.sh" --specialist "$SPECIALIST" >/dev/null || exit 1
 fi
 
 # Backend selection (data/fm-backend-design-d7): explicit --backend, else
@@ -1767,6 +1785,7 @@ META_WINDOW=$T
   echo "model=${MODEL:-default}"
   echo "effort=${EFFORT:-default}"
   echo "role=${ROLE:-default}"
+  [ "$SPECIALIST_SET" -eq 0 ] || echo "specialist=$SPECIALIST"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
@@ -1948,4 +1967,4 @@ if [ "$KIND" = secondmate ]; then
   fi
 fi
 
-echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$META_WINDOW worktree=$WT${ROLE:+ role=$ROLE}"
+echo "spawned $ID harness=$HARNESS kind=$KIND mode=$MODE yolo=$YOLO window=$META_WINDOW worktree=$WT${ROLE:+ role=$ROLE}${SPECIALIST:+ specialist=$SPECIALIST}"

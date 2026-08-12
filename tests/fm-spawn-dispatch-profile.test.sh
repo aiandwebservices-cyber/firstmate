@@ -778,6 +778,85 @@ test_role_kind_dual_accepted_on_both_kinds() {
   pass "fm-spawn accepts dual-kind roles on either deliverable kind"
 }
 
+test_specialist_records_meta_and_reports_on_spawn_line() {
+  local rec id out status agents
+  id=profile-specialist-z25
+  rec=$(make_spawn_case profile-specialist claude "$id")
+  read_case_record "$rec"
+  agents="$CASE_DIR/agents"
+  mkdir -p "$agents/plugins/frontend-mobile-development/agents"
+  printf '%s\n' 'fixture frontend-developer' \
+    > "$agents/plugins/frontend-mobile-development/agents/frontend-developer.md"
+
+  out=$(FM_WSHOBSON_AGENTS_ROOT="$agents" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --role builder --specialist frontend-developer)
+  status=$?
+  expect_code 0 "$status" "spawn with --specialist frontend-developer should succeed"
+  assert_contains "$out" "specialist=frontend-developer" \
+    "spawn line did not report the assigned specialist"
+  assert_grep "specialist=frontend-developer" "$HOME_DIR/state/$id.meta" \
+    "meta missing specialist=frontend-developer"
+  pass "fm-spawn records --specialist in meta and on the spawn line"
+}
+
+test_specialist_absent_from_meta_without_flag() {
+  local rec id out status
+  id=profile-specialist-none-z26
+  rec=$(make_spawn_case profile-specialist-none claude "$id")
+  read_case_record "$rec"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR")
+  status=$?
+  expect_code 0 "$status" "spawn without --specialist should succeed"
+  assert_no_grep "specialist=" "$HOME_DIR/state/$id.meta" \
+    "meta must not grow a specialist= line when none was assigned"
+  assert_not_contains "$out" " specialist=" \
+    "spawn line must not report a specialist when none was assigned"
+  pass "fm-spawn omits specialist= when no --specialist is passed"
+}
+
+test_specialist_unknown_refuses_before_endpoint_or_metadata() {
+  local rec id out status agents
+  id=profile-specialist-unknown-z27
+  rec=$(make_spawn_case profile-specialist-unknown claude "$id")
+  read_case_record "$rec"
+  agents="$CASE_DIR/agents"
+  mkdir -p "$agents/plugins/javascript-typescript/agents"
+  printf '%s\n' 'fixture' \
+    > "$agents/plugins/javascript-typescript/agents/typescript-pro.md"
+
+  out=$(FM_WSHOBSON_AGENTS_ROOT="$agents" \
+    run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$PROJ_DIR" --specialist not-a-real-agent)
+  status=$?
+  expect_code 1 "$status" "unknown --specialist must be rejected"
+  assert_contains "$out" "unknown specialist 'not-a-real-agent'" \
+    "unknown specialist rejection must name the specialist"
+  assert_absent "$HOME_DIR/state/$id.meta" \
+    "rejected unknown specialist must not write meta"
+  pass "fm-spawn rejects unknown specialists before creating an endpoint or metadata"
+}
+
+test_specialist_rejected_with_secondmate_spawn() {
+  local rec id sm out status
+  id=profile-specialist-secondmate-z28
+  rec=$(make_spawn_case profile-specialist-secondmate codex "$id")
+  read_case_record "$rec"
+  sm="$CASE_DIR/secondmate-home"
+  make_seeded_secondmate_home "$sm" "$id"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
+    "$id" "$sm" --secondmate --specialist frontend-developer)
+  status=$?
+  expect_code 1 "$status" "--specialist with --secondmate must be rejected"
+  assert_contains "$out" "--specialist does not apply to --secondmate" \
+    "secondmate --specialist rejection must state the conflict"
+  assert_absent "$HOME_DIR/state/$id.meta" \
+    "rejected secondmate --specialist must not write meta"
+  pass "fm-spawn rejects --specialist on secondmate spawns"
+}
+
 test_no_profile_keeps_claude_profile_defaults
 test_relative_home_overrides_launch_with_absolute_cross_process_paths
 test_home_defaults_preserve_absolute_or_resolve_relative_paths
@@ -811,5 +890,9 @@ test_role_rejected_with_secondmate_spawn
 test_role_kind_contradiction_rejected_on_scout_spawn
 test_role_kind_contradiction_rejected_on_ship_spawn
 test_role_kind_dual_accepted_on_both_kinds
+test_specialist_records_meta_and_reports_on_spawn_line
+test_specialist_absent_from_meta_without_flag
+test_specialist_unknown_refuses_before_endpoint_or_metadata
+test_specialist_rejected_with_secondmate_spawn
 
 echo "# all fm-spawn-dispatch-profile tests passed"

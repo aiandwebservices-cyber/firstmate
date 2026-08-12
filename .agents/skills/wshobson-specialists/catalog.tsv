@@ -1,0 +1,45 @@
+# specialist	fm_role	plugin	keywords	skills
+# wshobson/agents catalog for firstmate intake. Keywords are lowercase substrings.
+frontend-developer	builder	frontend-mobile-development	frontend,react,next.js,nextjs,tailwind,css,ui component,shadcn,tsx page,landing page	
+mobile-developer	builder	frontend-mobile-development	mobile,react native,expo,capacitor,ios,android,apk,app store	
+ui-designer	designer	ui-design	ui design,ux,wireframe,design system,visual design,figma,penpot	
+accessibility-expert	designer	ui-design	a11y,accessibility,wcag,screen reader,aria	
+backend-architect	architect	backend-development	backend,nestjs,nest js,api design,microservice,nestjs,trpc,rest api,graphql,service boundary,event-driven	
+typescript-pro	builder	javascript-typescript	typescript,typecheck,tsc,generic type,zod	
+javascript-pro	builder	javascript-typescript	javascript,node.js,nodejs,eslint	
+python-pro	builder	python-development	python,fastapi,django,pytest	
+sql-pro	builder	database-design	sql,query,postgres,postgresql,index,prisma	
+database-architect	architect	database-design	schema,migration,database design,data model,neon	
+database-optimizer	debugger	observability-monitoring	slow query,n+1,query plan,db performance	
+debugger	debugger	unit-testing	bug,fix the,fix a,not working,doesnt work,does not work,broken,crash,regression,stack trace,failing test,error,repro	
+test-automator	tester	unit-testing	test suite,unit test,e2e,coverage,playwright test,vitest,jest	
+code-reviewer	reviewer	code-refactoring	code review,review pr,pr review,critique	
+security-auditor	reviewer	full-stack-orchestration	security,auth,oauth,csrf,xss,injection,secrets,threat	
+performance-engineer	debugger	application-performance	performance,latency,slow,p95,profiling,memory leak	
+deployment-engineer	builder	cicd-automation	deploy,ci/cd,github actions,pipeline,docker,release	
+cloud-architect	architect	cloud-infrastructure	aws,gcp,azure,cloud,infra,terraform,k8s,kubernetes	
+devops-troubleshooter	debugger	incident-response	devops,production,outage,logs,systemd,ops,lina,vps	
+incident-responder	debugger	incident-response	incident,sev,page,on-call,postmortem,down,502,500	
+payment-integration	builder	payment-processing	stripe,payment,billing,checkout,subscription,pci	
+ai-engineer	architect	llm-application-dev	ai agent,llm,rag,embedding,prompt,langgraph,tool call,mcp,multi-agent	
+docs-architect	researcher	code-documentation	documentation,readme,api docs,tutorial,changelog	
+content-marketer	researcher	content-marketing	marketing copy,content marketing,blog post,campaign	
+seo-content-writer	researcher	seo-content-creation	seo,keyword,meta description,search ranking	
+sales-automator	builder	customer-sales-automation	sales automation,crm outreach,sequence,lead scoring	
+data-engineer	builder	data-engineering	etl,data pipeline,airflow,warehouse,analytics	
+ml-engineer	builder	llm-application-dev	machine learning,model train,mlops,finetune	
+monorepo-architect	architect	developer-essentials	monorepo,turborepo,nx,workspace package	
+legacy-modernizer	builder	code-refactoring	legacy,modernize,migration refactor,strangler	
+prompt-engineer	researcher	llm-application-dev	prompt engineer,system prompt,eval prompt	
+observability-engineer	builder	application-performance	observability,metrics,tracing,opentelemetry,sentry	
+network-engineer	debugger	incident-response	dns,ssl,tls,nginx,cloudflare,proxy	
+business-analyst	planner	business-analytics	product requirements,prd,roadmap,prioritize,mvp	
+architect-review	reviewer	comprehensive-review	architecture review,design review,adr	
+event-sourcing-architect	architect	backend-development	event sourcing,cqrs,saga,event store	
+graphql-architect	architect	backend-development	graphql schema,resolver,federation	
+ios-developer	builder	frontend-mobile-development	swift,swiftui,ios native	
+flutter-expert	builder	frontend-mobile-development	flutter,dart	
+golang-pro	builder	systems-programming	golang,go module,goroutine	
+rust-pro	builder	systems-programming	rust,cargo	
+search-specialist	researcher	content-marketing	research,deep research,competitive analysis,investigate	
+team-lead	planner	agent-orchestration	orchestrate agents,multi agent team,parallel agents	

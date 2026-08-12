@@ -743,6 +743,84 @@ test_role_rejects_unknown_secondmate_and_missing_value() {
   pass "fm-brief.sh: --role rejects unknown roles, secondmate charters, and missing values"
 }
 
+# --specialist injects the wshobson agent contract, can supply a role when
+# --role is omitted, remaps scout-only catalog roles on a ship brief, and
+# fails loudly for unknown names or secondmate charters.
+test_specialist_injects_contract_and_supplies_role() {
+  local home ship agents
+  home="$TMP_ROOT/specialist-inject-home"
+  agents="$home/agents"
+  mkdir -p "$home/data" \
+    "$agents/plugins/frontend-mobile-development/agents" \
+    "$agents/plugins/backend-development/agents"
+  printf '%s\n' 'You are the frontend-developer specialist fixture.' \
+    > "$agents/plugins/frontend-mobile-development/agents/frontend-developer.md"
+  printf '%s\n' 'You are the backend-architect specialist fixture.' \
+    > "$agents/plugins/backend-development/agents/backend-architect.md"
+
+  FM_HOME="$home" FM_WSHOBSON_AGENTS_ROOT="$agents" \
+    "$ROOT/bin/fm-brief.sh" spec-ship firstmate --specialist frontend-developer >/dev/null 2>&1 \
+    || fail "fm-brief.sh ship --specialist frontend-developer exited non-zero"
+  ship="$home/data/spec-ship/brief.md"
+  assert_grep "# Specialist (wshobson/agents)" "$ship" \
+    "ship --specialist brief missing the specialist section"
+  assert_grep "You must work as the **frontend-developer** specialist" "$ship" \
+    "ship --specialist brief missing the specialist name"
+  assert_grep "You are the frontend-developer specialist fixture." "$ship" \
+    "ship --specialist brief missing the injected agent contract"
+  assert_grep "# Role" "$ship" \
+    "--specialist without --role must still inject a role from the catalog"
+  assert_grep "You are the Builder." "$ship" \
+    "frontend-developer catalog role builder must land in the brief"
+  assert_grep "{TASK}" "$ship" "specialist brief must still carry the {TASK} placeholder"
+
+  FM_HOME="$home" FM_WSHOBSON_AGENTS_ROOT="$agents" \
+    "$ROOT/bin/fm-brief.sh" spec-arch firstmate --specialist backend-architect >/dev/null 2>&1 \
+    || fail "ship --specialist backend-architect should remap architect to builder"
+  assert_grep "You are the Builder." "$home/data/spec-arch/brief.md" \
+    "ship + architect specialist must remap to builder to avoid a kind contradiction"
+  pass "fm-brief.sh: --specialist injects the agent contract and a compatible role"
+}
+
+test_specialist_rejects_unknown_secondmate_and_missing_value() {
+  local home status=0 err agents
+  home="$TMP_ROOT/specialist-reject-home"
+  agents="$home/agents"
+  mkdir -p "$home/data" "$agents/plugins/javascript-typescript/agents"
+  printf '%s\n' 'fixture' \
+    > "$agents/plugins/javascript-typescript/agents/typescript-pro.md"
+  err="$home/spec.err"
+
+  FM_HOME="$home" FM_WSHOBSON_AGENTS_ROOT="$agents" \
+    "$ROOT/bin/fm-brief.sh" spec-unknown firstmate --specialist not-a-real-agent \
+    >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "unknown --specialist must be rejected"
+  assert_grep "unknown specialist 'not-a-real-agent'" "$err" \
+    "unknown specialist rejection must name the specialist"
+  assert_absent "$home/data/spec-unknown/brief.md" \
+    "rejected unknown specialist must not write a brief"
+
+  status=0
+  FM_HOME="$home" FM_SECONDMATE_CHARTER=x FM_WSHOBSON_AGENTS_ROOT="$agents" \
+    "$ROOT/bin/fm-brief.sh" spec-sm --secondmate firstmate --specialist typescript-pro \
+    >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "--specialist with --secondmate must be rejected"
+  assert_grep "does not apply to --secondmate" "$err" \
+    "secondmate --specialist rejection must state the conflict"
+  assert_absent "$home/data/spec-sm/brief.md" \
+    "rejected secondmate --specialist must not write a brief"
+
+  status=0
+  FM_HOME="$home" FM_WSHOBSON_AGENTS_ROOT="$agents" \
+    "$ROOT/bin/fm-brief.sh" spec-empty firstmate --specialist= >/dev/null 2>"$err" || status=$?
+  expect_code 1 "$status" "empty --specialist value must be rejected"
+  assert_grep "--specialist requires a non-empty value" "$err" \
+    "empty --specialist value must fail loudly"
+  assert_absent "$home/data/spec-empty/brief.md" \
+    "rejected empty --specialist must not write a brief"
+  pass "fm-brief.sh: --specialist rejects unknown names, secondmate charters, and missing values"
+}
+
 test_script_parses
 test_no_heredoc_in_command_substitution
 test_help_includes_entire_header
@@ -763,3 +841,5 @@ test_scout_and_secondmate_scaffold
 test_role_injects_contract_into_ship_and_scout
 test_role_kind_consistency_enforced
 test_role_rejects_unknown_secondmate_and_missing_value
+test_specialist_injects_contract_and_supplies_role
+test_specialist_rejects_unknown_secondmate_and_missing_value
