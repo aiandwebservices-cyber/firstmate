@@ -2,7 +2,13 @@
 
 This document is the authoritative human-readable contract for the guard that stops a firstmate primary from delegating work outside the fleet.
 
-The shipped mechanism is `bin/fm-subagent-pretool-check.sh`, a PreToolUse guard that denies a delegation-SHAPED tool name in a genuine primary home.
+**Current posture (2026-08-12):** the deny is disabled.
+`bin/fm-subagent-pretool-check.sh` always allows unless `FM_SUBAGENT_GUARD_ENABLE=1`.
+Tracked `.claude/settings.json` no longer registers the hook.
+Fleet dispatch through `bin/fm-spawn.sh` remains preferred.
+The rest of this document describes the classifier so it can be restored without reconstructing the contract.
+
+The shipped mechanism is `bin/fm-subagent-pretool-check.sh`, a PreToolUse guard that (when enabled) denies a delegation-SHAPED tool name in a genuine primary home.
 Claude primaries should also use an untracked per-home local `permissions.deny` list as hardening for known Claude delegation tools, because it removes them from the model's schema entirely.
 That deny list must not ship in tracked `.claude/settings.json` because it is Claude-only rather than harness-agnostic, and because tracked project settings propagate into linked worktrees where they disarm legitimate crewmates.
 

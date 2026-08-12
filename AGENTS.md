@@ -246,6 +246,7 @@ Firstmate's standing delivery process model is ADLC (agentic delivery lifecycle)
 Owner: [`docs/adlc-standard.md`](docs/adlc-standard.md) - do not restate stages here.
 Apply at intake when classifying ship vs scout, when scout is required, when assigning the task's agent role, and when explaining outcomes to the captain.
 Assign the role from the fixed `agent-roles` catalog (assistant, planner, architect, designer, builder, debugger, reviewer, researcher, tester) and pass it through `fm-brief.sh --role` and `fm-spawn.sh --role`, which validate it against the catalog and record it in the task's meta.
+Also resolve a wshobson/agents **specialist** via `wshobson-specialists` / `bin/fm-specialist-resolve.sh` and pass `--specialist` on brief and spawn so the worker brief carries a domain expert contract (not only a lifecycle role).
 ADLC does not change hard rules in section 1 or delivery mode / yolo mechanics in this section.
 
 ### Intake and authority
@@ -503,6 +504,7 @@ It performs guarded fast-forward updates of firstmate and registered secondmate 
 These skills are not captain-invocable; load them only at their precise triggers.
 
 - `agent-roles` - load at intake before classifying a task's agent role and before passing `--role` to `fm-brief.sh` or `fm-spawn.sh`.
+- `wshobson-specialists` - load at every dispatch intake after `agent-roles`, before scaffolding or spawning; resolves a domain specialist from `~/agents` (wshobson/agents) and requires `--specialist` on brief and spawn.
 - `bootstrap-diagnostics` - load whenever the session-start digest's bootstrap section prints an actionable diagnostic line (`MISSING:`, `MISSING_MANUAL:`, `BACKEND_INVALID:`, `NEEDS_GH_AUTH`, `TANGLE:`, `STARTUP_MEMORY_BUDGET:`, `CREW_DISPATCH: invalid`, `FLEET_SYNC:`, `PR_CHECK_MIGRATION:`, `SECONDMATE_SYNC:`, `SECONDMATE_LIVENESS:`, `NUDGE_SECONDMATES:`, or `FMX:`); silence and `BOOTSTRAP_INFO:` need no load.
 - `diagnostic-reasoning` - load before scoping a reported bug and before acting on a diagnostic report.
 - `ask-user-authority` - load before deciding any ask-user finding, regardless of the project's `yolo` posture.

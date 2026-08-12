@@ -43,13 +43,19 @@ The `kinds:` line is the machine-readable form of the Kind column; they never di
 2. Pick the role that best names the work using the catalog table above.
    Default to `assistant` when no specialized role clearly fits.
    For a bug report, `debugger` is the default role and it is scout until a fix is authorized.
-3. Resolve the role onto a concrete spawn:
-   - Scout-kind roles spawn with `fm-brief.sh --scout --role <name>` and `fm-spawn.sh --scout --role <name>`.
-   - Ship-kind roles spawn with `fm-brief.sh --role <name>` and `fm-spawn.sh --role <name>`.
+3. **Resolve a domain specialist** (mandatory for every dispatch, not for pure inline answers).
+   Load `wshobson-specialists` and run `bin/fm-specialist-resolve.sh --from-text "<request>"`
+   (or `--specialist <name>` when the captain named one).
+   Pass `--specialist` on both `fm-brief` and `fm-spawn` so the worker brief carries the
+   wshobson agent contract and meta records `specialist=`.
+   Roles alone are not enough: without a specialist the worker is a generic crewmate.
+4. Resolve the role onto a concrete spawn:
+   - Scout-kind roles spawn with `fm-brief.sh --scout --role <name> --specialist <s>` and `fm-spawn.sh --scout --role <name> --specialist <s>`.
+   - Ship-kind roles spawn with `fm-brief.sh --role <name> --specialist <s>` and `fm-spawn.sh --role <name> --specialist <s>`.
    - `assistant` work answered inline never spawns and records no task.
-4. Map effort per the harness-adapters policy, not a per-role copy of it:
+5. Map effort per the harness-adapters policy, not a per-role copy of it:
    investigation and design roles (planner, architect, designer, researcher, debugger-scout) default to ambiguous-investigation effort, builder and tester to well-understood-effort, and an explicit captain or standing configured effort always wins.
-5. Relay outcomes to the captain in plain role language (the investigation, the plan, the design, the fix, the review, the tests, the PR), per `AGENTS.md` section 9.
+6. Relay outcomes to the captain in plain role language (the investigation, the plan, the design, the fix, the review, the tests, the PR), per `AGENTS.md` section 9, and name the specialist when it matters (e.g. mobile vs backend).
 
 ## Constraints
 

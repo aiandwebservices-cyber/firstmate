@@ -6,7 +6,7 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--role <name>] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--role <name>] [--specialist <name>] [--herdr-lab]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
@@ -16,6 +16,9 @@
 #   --secondmate because a secondmate is a persistent domain, not a task role.
 #   The role name is validated against that catalog, so an unknown role fails
 #   loudly rather than silently scaffolding an unlabeled brief.
+#   --specialist <name> injects a wshobson/agents specialist contract (resolved
+#   by bin/fm-specialist-resolve.sh from ~/agents). When --role is omitted, the
+#   specialist catalog's fm_role is used. Rejected with --secondmate.
 #   --secondmate writes a persistent secondmate charter. The project list
 #   is cloned into the secondmate home, while the natural-language scope
 #   tells the main firstmate when to route work there; routine churn stays in its own home;
@@ -102,6 +105,8 @@ HERDR_LAB=0
 NO_PROJECTS=0
 ROLE=
 ROLE_SET=0
+SPECIALIST=
+SPECIALIST_SET=0
 POS=()
 want_value=
 for a in "$@"; do
@@ -111,6 +116,7 @@ for a in "$@"; do
     esac
     case "$want_value" in
       role) ROLE=$a; ROLE_SET=1 ;;
+      specialist) SPECIALIST=$a; SPECIALIST_SET=1 ;;
       *) echo "error: internal parser state for --$want_value" >&2; exit 1 ;;
     esac
     want_value=
@@ -121,6 +127,8 @@ for a in "$@"; do
     --secondmate) KIND=secondmate ;;
     --role) want_value=role ;;
     --role=*) ROLE=${a#--role=}; ROLE_SET=1 ;;
+    --specialist) want_value=specialist ;;
+    --specialist=*) SPECIALIST=${a#--specialist=}; SPECIALIST_SET=1 ;;
     --herdr-lab) HERDR_LAB=1 ;;
     --no-projects) NO_PROJECTS=1 ;;
     *) POS+=("$a") ;;
@@ -142,6 +150,50 @@ fi
 if [ "$ROLE_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
   echo "error: --role does not apply to --secondmate charters" >&2
   exit 1
+fi
+
+if [ "$SPECIALIST_SET" -eq 1 ] && [ "$KIND" = secondmate ]; then
+  echo "error: --specialist does not apply to --secondmate charters" >&2
+  exit 1
+fi
+
+SPECIALIST_SECTION=
+if [ "$SPECIALIST_SET" -eq 1 ]; then
+  [ -n "$SPECIALIST" ] || { echo "error: --specialist requires a non-empty value" >&2; exit 1; }
+  RESOLVE_OUT=$("$FM_ROOT/bin/fm-specialist-resolve.sh" --specialist "$SPECIALIST") || exit 1
+  SPEC_PATH=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^agent_path=//p' | head -1)
+  SPEC_ROLE=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^role=//p' | head -1)
+  SPEC_PLUGIN=$(printf '%s\n' "$RESOLVE_OUT" | sed -n 's/^plugin=//p' | head -1)
+  [ -n "$SPEC_PATH" ] && [ -f "$SPEC_PATH" ] || {
+    echo "error: specialist resolve returned no agent_path for '$SPECIALIST'" >&2
+    exit 1
+  }
+  if [ "$ROLE_SET" -eq 0 ] && [ -n "$SPEC_ROLE" ]; then
+    ROLE=$SPEC_ROLE
+    # Scout-only catalog roles cannot be applied to a ship brief; fall back to
+    # builder so --specialist alone still scaffolds without a kind contradiction.
+    if [ "$KIND" = ship ]; then
+      case "$ROLE" in
+        architect|designer|planner|researcher|reviewer) ROLE=builder ;;
+      esac
+    fi
+    ROLE_SET=1
+  fi
+  # Cap injected specialist body so briefs stay bounded; full file path is authoritative.
+  SPEC_BODY=$(sed -n '1,120p' "$SPEC_PATH")
+  SPECIALIST_SECTION="
+# Specialist (wshobson/agents)
+
+You must work as the **${SPECIALIST}** specialist (plugin: ${SPEC_PLUGIN}).
+Authoritative agent contract (read fully if truncated below): \`${SPEC_PATH}\`
+
+Adopt that specialist's purpose, capabilities, and quality bar while still obeying
+the firstmate Role section, hard rules, and this brief's Definition of done.
+
+\`\`\`
+${SPEC_BODY}
+\`\`\`
+"
 fi
 
 # The role catalog is the single owner of role names, contracts, and allowed
@@ -323,6 +375,7 @@ if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 $ROLE_SECTION
+$SPECIALIST_SECTION
 # Task
 {TASK}
 
@@ -438,6 +491,7 @@ DOD=${DOD%$'\n'}
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 $ROLE_SECTION
+$SPECIALIST_SECTION
 # Task
 {TASK}
 

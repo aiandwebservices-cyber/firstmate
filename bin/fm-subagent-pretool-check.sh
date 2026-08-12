@@ -52,6 +52,13 @@
 # OpenCode and Pi consume exit 2 plus stderr.
 set -u
 
+# Captain 2026-08-12: disable spawn-path deny. Fleet dispatch via fm-spawn remains
+# preferred, but harness Task/spawn_subagent/workflow must not hard-block the primary.
+# The classifier below stays so it can be restored with FM_SUBAGENT_GUARD_ENABLE=1.
+if [ "${FM_SUBAGENT_GUARD_ENABLE:-}" != 1 ]; then
+  exit 0
+fi
+
 # Lowercase substrings that mark a tool name as delegation-shaped: it creates
 # work, an agent, a schedule, or an isolated workspace that firstmate would not
 # know about. This list is the single owner of the shipped classification.

@@ -216,6 +216,10 @@
       "audience": "agent-runtime"
     },
     {
+      "path": ".agents/skills/wshobson-specialists/SKILL.md",
+      "audience": "agent-runtime"
+    },
+    {
       "path": "AGENTS.md",
       "audience": "agent-runtime"
     },
