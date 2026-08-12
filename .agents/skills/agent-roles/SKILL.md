@@ -18,8 +18,9 @@ They are a labeling and prompting layer: the worker stays a firstmate crewmate o
 ## The role catalog
 
 The canonical role contracts live one file per role in `roles/` under this skill directory.
-`fm-brief.sh --role <name>` reads and injects that file verbatim into the brief.
-`fm-spawn.sh --role <name>` validates the same catalog and records the role in the task's meta.
+Each role file opens with a machine-readable `kinds:` line (`scout`, `ship`, or `scout|ship`) declaring which deliverable kinds the role may serve.
+`fm-brief.sh --role <name>` reads and injects that file verbatim into the brief (dropping the machine line), and `fm-spawn.sh --role <name>` validates the same catalog and records the role in the task's meta.
+Both scripts reject a role-kind contradiction at scaffold or spawn time, so a Builder contract can never land in a report-only scout brief.
 Never restate a role contract outside its file (one-owner rule); reference it by name and file instead.
 
 | Role | Kind | When | Handoff |
@@ -32,7 +33,9 @@ Never restate a role contract outside its file (one-owner rule); reference it by
 | debugger | scout or ship | Bugs, test failures, unexpected behavior, regressions, performance issues. Scout (report only) by default; ship only when a fix is authorized. | builder / reviewer |
 | reviewer | scout | Independent quality critique of a PR or branch, or design review, only when the captain requests a separate review deliverable. | - |
 | researcher | scout | Deep investigation without mutation: how does X work, library evaluation, codebase mapping, bug reproduction, audits, pre-planning. | planner / architect |
-| tester | ship or scout | Verification and test coverage alongside or after the builder, or a standalone test strategy. | reviewer |
+| tester | scout or ship | Verification and test coverage alongside or after the builder, or a standalone test strategy. | reviewer |
+
+The `kinds:` line is the machine-readable form of the Kind column; they never disagree.
 
 ## Assign a role at intake
 
