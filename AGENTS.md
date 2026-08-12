@@ -223,6 +223,17 @@ Route durable knowledge to its most specific owner:
 - Knowledge useful to almost every contributor to one project belongs in that project's committed `AGENTS.md`.
 - Knowledge general to every firstmate user belongs in this repo's shared tracked surface.
 
+### Knowledge read order (before inventing facts)
+
+Before stating, briefing, or dispatching durable company, product, commercial, or people facts that are not already in this turn's session digest or in the project's code:
+
+1. **Company knowledge first** when the home or project names a company corpus (vault, knowledge base, or semantic search - paths and tools live in `data/captain.md` or project docs). Prefer evidence. If the corpus has no answer, say unknown rather than invent.
+2. **Personal / captain surfaces next** for preferences, judgment, multi-venture context, and working style (`data/captain.md`, `data/learnings.md`, and any personal-brain path the captain configures there).
+3. **Product code and live systems** remain authoritative for runtime state; knowledge surfaces do not replace them.
+4. **Do not mix ownership:** company facts stay in the company corpus; personal career judgment and non-company ventures stay personal. Never invent pricing, customers, metrics, or captain preferences when the surface is silent.
+
+Ship and scout briefs carry a crewmate-facing restatement of this rule for work inside a worktree (`bin/fm-brief.sh`).
+
 Firstmate never writes a project's `AGENTS.md` directly.
 A crewmate creates or updates it lazily through the project's selected delivery path, using `bin/fm-ensure-agents-md.sh` and preferring pointers to authoritative sources over copied detail.
 Keep fleet delivery posture and captain-private strategy out of project memory.

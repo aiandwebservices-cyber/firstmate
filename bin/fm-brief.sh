@@ -356,6 +356,12 @@ The report is the only thing that survives, so anything worth keeping must be in
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
 
+# Knowledge before inventing
+Before inventing company, commercial, product, or people facts outside this worktree's code and docs:
+1. Prefer project code and docs in this worktree (including project \`AGENTS.md\` / \`CLAUDE.md\`).
+2. Prefer evidence over guesswork. If a fact is not supported, write UNKNOWN or escalate with \`needs-decision:\` rather than inventing pricing, customers, metrics, or captain preferences.
+3. Firstmate owns company-knowledge and personal-brain surfaces; if you need them, append \`needs-decision:\` or \`blocked:\` naming what is missing rather than fabricating the answer.
+
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
@@ -470,6 +476,12 @@ $RULE1
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
    daemon error, append \`blocked: {the daemon error}\` and stop; only firstmate manages the daemon.
+
+# Knowledge before inventing
+Before inventing company, commercial, product, or people facts outside this worktree's code and docs:
+1. Prefer project code and docs in this worktree (including project \`AGENTS.md\` / \`CLAUDE.md\`).
+2. Prefer evidence over guesswork. If a fact is not supported, write UNKNOWN or escalate with \`needs-decision:\` rather than inventing pricing, customers, metrics, or captain preferences.
+3. Firstmate owns company-knowledge and personal-brain surfaces; if you need them, append \`needs-decision:\` or \`blocked:\` naming what is missing rather than fabricating the answer.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
