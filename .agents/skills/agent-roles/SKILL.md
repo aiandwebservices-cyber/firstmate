@@ -44,7 +44,7 @@ The `kinds:` line is the machine-readable form of the Kind column; they never di
    Default to `assistant` when no specialized role clearly fits.
    For a bug report, `debugger` is the default role and it is scout until a fix is authorized.
 3. **Resolve a domain specialist** (mandatory for every dispatch, not for pure inline answers).
-   Load `wshobson-specialists` and run `bin/fm-specialist-resolve.sh --from-text "<request>"`
+   Load `wshobson-specialists` and run `bin/fm-specialist-resolve.sh --from-text "<request>" --role <role>`
    (or `--specialist <name>` when the captain named one).
    Pass `--specialist` on both `fm-brief` and `fm-spawn` so the worker brief carries the
    wshobson agent contract and meta records `specialist=`.

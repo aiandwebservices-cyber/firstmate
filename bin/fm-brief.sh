@@ -180,7 +180,12 @@ if [ "$SPECIALIST_SET" -eq 1 ]; then
     ROLE_SET=1
   fi
   # Cap injected specialist body so briefs stay bounded; full file path is authoritative.
-  SPEC_BODY=$(sed -n '1,120p' "$SPEC_PATH")
+  # Drop YAML frontmatter so harness pins such as model: opus do not leak into the brief.
+  SPEC_BODY=$(awk '
+    NR==1 && $0=="---" {fm=1; next}
+    fm && $0=="---" {fm=0; next}
+    !fm {print}
+  ' "$SPEC_PATH" | sed -n '1,120p')
   SPECIALIST_SECTION="
 # Specialist (wshobson/agents)
 

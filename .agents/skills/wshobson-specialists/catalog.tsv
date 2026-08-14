@@ -43,3 +43,7 @@ golang-pro	builder	systems-programming	golang,go module,goroutine
 rust-pro	builder	systems-programming	rust,cargo	
 search-specialist	researcher	content-marketing	research,deep research,competitive analysis,investigate	
 team-lead	planner	agent-orchestration	orchestrate agents,multi agent team,parallel agents	
+bash-pro	builder	shell-scripting	bash,shell script,posix shell	
+temporal-python-pro	builder	backend-development	temporal workflow,temporalio	
+terraform-specialist	builder	cloud-infrastructure	terraform,opentofu,iac module	
+vector-database-engineer	builder	llm-application-dev	qdrant,pinecone,weaviate,pgvector,vector database,embedding,embedding index	
