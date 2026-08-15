@@ -841,5 +841,32 @@ test_scout_and_secondmate_scaffold
 test_role_injects_contract_into_ship_and_scout
 test_role_kind_consistency_enforced
 test_role_rejects_unknown_secondmate_and_missing_value
+test_specialist_strips_frontmatter_from_injected_body() {
+  local home ship agents
+  home="$TMP_ROOT/specialist-frontmatter-home"
+  agents="$home/agents"
+  mkdir -p "$home/data" "$agents/plugins/frontend-mobile-development/agents"
+  printf '%s\n' \
+    '---' \
+    'name: frontend-developer' \
+    'description: Build React components.' \
+    'model: opus' \
+    '---' \
+    'You are the frontend-developer specialist fixture.' \
+    > "$agents/plugins/frontend-mobile-development/agents/frontend-developer.md"
+
+  FM_HOME="$home" FM_WSHOBSON_AGENTS_ROOT="$agents" \
+    "$ROOT/bin/fm-brief.sh" spec-fm firstmate --specialist frontend-developer >/dev/null 2>&1 \
+    || fail "fm-brief.sh --specialist with frontmatter exited non-zero"
+  ship="$home/data/spec-fm/brief.md"
+  assert_grep "You are the frontend-developer specialist fixture." "$ship" \
+    "frontmatter specialist brief must still inject the agent body"
+  if grep -q 'model: opus' "$ship"; then
+    fail "specialist frontmatter model pin must not leak into the brief"
+  fi
+  pass "fm-brief.sh: --specialist strips YAML frontmatter from the injected body"
+}
+
 test_specialist_injects_contract_and_supplies_role
 test_specialist_rejects_unknown_secondmate_and_missing_value
+test_specialist_strips_frontmatter_from_injected_body
