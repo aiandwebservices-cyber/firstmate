@@ -32,6 +32,8 @@ make_agents_fixture() {
     > "$AGENTS_ROOT/plugins/frontend-mobile-development/agents/frontend-developer.md"
   printf '%s\n' 'You are the debugger specialist.' \
     > "$AGENTS_ROOT/plugins/unit-testing/agents/debugger.md"
+  printf '%s\n' 'You are the test-automator specialist.' \
+    > "$AGENTS_ROOT/plugins/unit-testing/agents/test-automator.md"
   printf '%s\n' 'You are the catalog backend-architect specialist.' \
     > "$AGENTS_ROOT/plugins/backend-development/agents/backend-architect.md"
   printf '%s\n' 'You are the decoy backend-architect specialist.' \
@@ -110,6 +112,16 @@ test_from_text_defaults_when_no_keyword_hits() {
   [ "$(kv "$out" specialist)" = typescript-pro ] \
     || fail "no-match default must be typescript-pro, got: $out"
   pass "no keyword match defaults to typescript-pro"
+}
+
+test_from_text_strips_plural_on_short_words() {
+  local out
+  out=$(run_resolve --from-text 'add unit tests and coverage') \
+    || fail "--from-text unit tests exited non-zero"
+  assert_contains "$out" "source=catalog" "plural keyword must hit the catalog"
+  [ "$(kv "$out" specialist)" = test-automator ] \
+    || fail "'unit tests' must resolve to test-automator, got: $out"
+  pass "plural 'unit tests' matches the catalog keyword 'unit test'"
 }
 
 test_unknown_specialist_fails_loudly() {
@@ -208,6 +220,7 @@ test_list_prints_catalog_rows
 test_explicit_specialist_uses_catalog_plugin_path
 test_from_text_picks_debugger_for_crash_language
 test_from_text_defaults_when_no_keyword_hits
+test_from_text_strips_plural_on_short_words
 test_unknown_specialist_fails_loudly
 test_uncatalogued_agent_file_is_accepted
 test_missing_agents_root_fails_loudly

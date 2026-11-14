@@ -66,7 +66,7 @@ U
 # Lowercase, keep alnum as tokens, strip a trailing s on long words that do
 # not end in ss so "unit tests" still matches the keyword "unit test".
 normalize() {
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' ' ' | sed -E 's/  +/ /g;s/^ //;s/ $//;s/([a-z0-9]{4,}[^s])s\b/\1/g'
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' ' ' | sed -E 's/  +/ /g;s/^ //;s/ $//;s/([a-z0-9]{3,}[^s ])s\b/\1/g'
 }
 
 declare -A CATALOG_NAMES=()
