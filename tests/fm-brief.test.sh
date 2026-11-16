@@ -870,3 +870,22 @@ test_specialist_strips_frontmatter_from_injected_body() {
 test_specialist_injects_contract_and_supplies_role
 test_specialist_rejects_unknown_secondmate_and_missing_value
 test_specialist_strips_frontmatter_from_injected_body
+
+test_ship_and_scout_carry_company_brain_section() {
+  local home id kind
+  home="$TMP_ROOT/company-brain-home"
+  mkdir -p "$home/data"
+  for kind in ship scout; do
+    id="brain-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --scout >/dev/null 2>&1 || fail "scout scaffold failed"
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj >/dev/null 2>&1 || fail "ship scaffold failed"
+    fi
+    assert_grep "# Company brain" "$home/data/$id/brief.md" "$kind brief lost the Company brain section"
+    assert_grep "brain-sync-protocol.md" "$home/data/$id/brief.md" "$kind brief lost the vault sync pointer"
+  done
+  pass "fm-brief.sh: ship and scout briefs carry the Company brain section"
+}
+
+test_ship_and_scout_carry_company_brain_section
