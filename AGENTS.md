@@ -233,6 +233,7 @@ Before stating, briefing, or dispatching durable company, product, commercial, o
 4. **Do not mix ownership:** company facts stay in the company corpus; personal career judgment and non-company ventures stay personal. Never invent pricing, customers, metrics, or captain preferences when the surface is silent.
 
 Ship and scout briefs carry a crewmate-facing restatement of this rule for work inside a worktree (`bin/fm-brief.sh`).
+Firstmate itself searches the Aerolot vault before relaying company facts and syncs decisions to it by vault PR after merges.
 
 Firstmate never writes a project's `AGENTS.md` directly.
 A crewmate creates or updates it lazily through the project's selected delivery path, using `bin/fm-ensure-agents-md.sh` and preferring pointers to authoritative sources over copied detail.

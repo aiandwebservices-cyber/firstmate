@@ -418,7 +418,13 @@ The report is the only thing that survives, so anything worth keeping must be in
 Before inventing company, commercial, product, or people facts outside this worktree's code and docs:
 1. Prefer project code and docs in this worktree (including project \`AGENTS.md\` / \`CLAUDE.md\`).
 2. Prefer evidence over guesswork. If a fact is not supported, write UNKNOWN or escalate with \`needs-decision:\` rather than inventing pricing, customers, metrics, or captain preferences.
-3. Firstmate owns company-knowledge and personal-brain surfaces; if you need them, append \`needs-decision:\` or \`blocked:\` naming what is missing rather than fabricating the answer.
+3. Firstmate owns the personal-brain surface; never use it for company facts. If you need it, append \`needs-decision:\` or \`blocked:\` naming what is missing rather than fabricating the answer.
+
+# Company brain
+Before answering any company, product, pricing, dealer, or decision question, search the Aerolot vault first: grep \`/home/david/aerolot-vault\` or use the \`aerolot-qdrant\` \`search_knowledge\` tool.
+Cite the note path. If the vault has no answer, say UNKNOWN.
+At the end, put new decisions and research into a vault note through a vault PR (see \`00-Meta/brain-sync-protocol.md\` in the vault).
+Company facts live only in the company vault. The owner rule is \`AGENTS.md\` section 6.
 
 # Definition of done
 Write your findings to \`$DATA/$ID/report.md\`.
@@ -540,7 +546,13 @@ $RULE1
 Before inventing company, commercial, product, or people facts outside this worktree's code and docs:
 1. Prefer project code and docs in this worktree (including project \`AGENTS.md\` / \`CLAUDE.md\`).
 2. Prefer evidence over guesswork. If a fact is not supported, write UNKNOWN or escalate with \`needs-decision:\` rather than inventing pricing, customers, metrics, or captain preferences.
-3. Firstmate owns company-knowledge and personal-brain surfaces; if you need them, append \`needs-decision:\` or \`blocked:\` naming what is missing rather than fabricating the answer.
+3. Firstmate owns the personal-brain surface; never use it for company facts. If you need it, append \`needs-decision:\` or \`blocked:\` naming what is missing rather than fabricating the answer.
+
+# Company brain
+Before answering any company, product, pricing, dealer, or decision question, search the Aerolot vault first: grep \`/home/david/aerolot-vault\` or use the \`aerolot-qdrant\` \`search_knowledge\` tool.
+Cite the note path. If the vault has no answer, say UNKNOWN.
+At the end, put new decisions and research into a vault note through a vault PR (see \`00-Meta/brain-sync-protocol.md\` in the vault).
+Company facts live only in the company vault. The owner rule is \`AGENTS.md\` section 6.
 
 # Project memory
 If \`AGENTS.md\` or \`CLAUDE.md\` already exists, or if this task produced durable project-intrinsic knowledge, run \`$FM_ROOT/bin/fm-ensure-agents-md.sh .\` in the worktree.
